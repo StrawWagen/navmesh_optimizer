@@ -1,0 +1,270 @@
+-- I DONT WANT TO DELETE THIS!!! :(
+
+local function areaIsBigNoMerge( area )
+    if not area:HasAttributes( NAV_MESH_NO_MERGE ) then return nil end
+
+    local size = math.max( area:GetSizeX(), area:GetSizeY() )
+    if size <= 25 then return end
+
+    return true
+
+end
+
+-- start an unbounded loop, 
+-- every operation, check if navarea + direction at the bottom of the operations has an area in direction
+    -- if that area already exists in the operations table, then we've made a loop and we're done
+
+    -- if that area has a matching corner to the current area and it's not in the closed table then
+        -- add that area + the direction that was taken to enter it, to the bottom of the open operations table
+        -- the current navarea 
+    -- if it doesn't have a matching or it's closed then 
+        -- switch directions
+        -- if the new corner is where we entered this area, then add this area to the closed table and nuke all operations with this area's id
+        -- otherwise next thing in loop
+
+-- preserve old direction in the tables by
+    -- extracting it as a variable 
+
+-- problem with this is that it blocks corners, not the path through corners.
+    -- make it take the last direction as a variable in the key -- lol no
+
+-- [[ THIS IS NOT IMPLEMENTED ]]
+local function blockThisOptionKey( enteringArea, areaToBlockOff )
+    return enteringArea:GetID() * areaToBlockOff:GetID() --+ ( enteringDirection + 1 )
+
+end
+
+-- [[ THIS IS NOT IMPLEMENTED ]]
+local function bigMergeGoBack( currOperation, closedOptions, operations )
+    local newOperations = {}
+    local currArea = currOperation.area
+
+    --debugoverlay.Cross( currOperation.lastArea:GetCenter(), 10, 15 )
+    --debugoverlay.Line( currOperation.lastArea:GetCenter(), currArea:GetCenter() + Vector(0,0,10), 15, Color( 255,255, 255 ), true )
+
+    local key = blockThisOptionKey( currOperation.lastArea, currArea )
+    table.insert( closedOptions, key, true )
+
+    -- go thru all positions in the operations list
+    for _, operationData in ipairs( operations ) do
+        -- continue until we backup outside of the current area
+        if operationData.area == currArea then continue end
+        table.insert( newOperations, operationData )
+    end
+    return newOperations, closedOptions
+
+end
+
+-- [[ THIS IS NOT IMPLEMENTED ]]
+function findBigMergeOpportunities( firstArea )
+
+    local seedPos = player.GetAll()[1]:GetEyeTrace().HitPos
+    local defaultArea = getNearestNav( seedPos, 1000 ) -- firstArea or getNearestNav( seedPos, 1000 )
+    local defaultDirection = 0
+    local maxDirection = 3
+    local closedOptions = {}
+    local operations = {} -- table of tables, has area and direction
+    local opCount = 0
+
+    local fullLoop = nil
+
+    table.insert( operations, 1, { area = defaultArea, lastArea = NULL, justEnteredArea = true, direction = defaultDirection, enteredDirection = defaultDirection, theCorner = defaultArea:GetCorner( defaultDirection ) } )
+
+    local oldTime = SysTime()
+
+    while #operations > 0 or #closedOptions == 0 do
+
+        opCount = opCount + 1
+        if opCount > 1000 then break end
+
+        -- ok we're checking the bottom of the table
+        local currOperation = operations[1]
+
+        if not currOperation then return false end
+
+        local managingArea = currOperation.area
+        local currentDirection = currOperation.direction
+        local justEnteredArea = currOperation.justEnteredArea
+        local lastArea = currOperation.lastArea
+
+        local directionSubtracted1 = currentDirection + -1
+        if directionSubtracted1 < defaultDirection then
+            directionSubtracted1 = maxDirection
+
+        end
+
+        local directionPlus1 = currentDirection + 1
+        if directionPlus1 > maxDirection then
+            directionPlus1 = defaultDirection
+
+        end
+
+        local currEnteredDirection = currOperation.enteredDirection
+        local theCorner = managingArea:GetCorner( currentDirection )
+
+        -- can we keep going in this direction?
+        local theNextAreas = managingArea:GetAdjacentAreasAtSide( currentDirection )
+
+        local goodCornerArea = nil
+        local hasAGoodCorner = false
+        if #theNextAreas then
+            for _, nextArea in ipairs( theNextAreas ) do
+                hasAGoodCorner = navAreaGetCloseCorners( theCorner, nextArea )
+
+                if hasAGoodCorner then
+                    goodCornerArea = nextArea
+                    break
+
+                end
+            end
+        end
+
+        -- identify if there's already an operation in this area, that is one of the other directions
+        local wrappingIntoALoop = nil
+
+        for _, operationData in ipairs( operations ) do
+            -- find the current area
+            -- once we at the current area, see if the direction is fucked up
+            -- so if an operation exists where it goes north, this will kill the new operation if it approaches from the east or west
+            -- this shouldn't have to work on the current area because self looping is handled below
+            local existsCheckArea = operationData.area
+            local operationsDirection = operationData.direction
+
+            -- guess what this does
+            local sameCornerButGoingBackwards = operationsDirection == currentDirection and operationData.lastArea ~= lastArea
+
+            local eatingOurself = operationsDirection == directionPlus1
+
+            if existsCheckArea == goodCornerArea and ( sameCornerButGoingBackwards or eatingOurself ) then
+                wrappingIntoALoop = true
+                break
+            end
+        end
+
+        local sameCornerWeStartedAt = nil
+        local returnedToStart = nil
+        local returningToStart = nil
+
+        if managingArea and managingArea == defaultArea and currentDirection == defaultDirection then
+            sameCornerWeStartedAt = true 
+        end
+        if managingArea and managingArea == defaultArea and #operations > 4 then
+            returnedToStart = true
+        end
+        if goodCornerArea and goodCornerArea == defaultArea and #operations > 4 then
+            returningToStart = true
+        end
+
+        local fullLoopInsideTheCurrentArea = nil
+        -- we are doing a loop inside our current area
+        if directionPlus1 == currEnteredDirection and not justEnteredArea then
+            --print( currentDirection, directionPlus1, currEnteredDirection )
+            fullLoopInsideTheCurrentArea = true
+            --debugoverlay.Text( managingArea:GetCenter(), tostring( currentDirection, directionPlus1, currEnteredDirection ), 15 )
+
+        end
+
+        local closeOurCurrentAreaAndBail = nil
+        local doDirectionChange = nil
+        local advanceToTheNewArea = nil
+
+        -- valid area and good corner
+        if hasAGoodCorner == true and goodCornerArea then
+
+            -- key is the starting area, and the next area
+            local keyNext = blockThisOptionKey( managingArea, goodCornerArea )
+
+            -- we are on the main area, and have traversed multiple areas
+            if returningToStart or returnedToStart then
+                if returnedToStart and sameCornerWeStartedAt then
+                    fullLoop = true
+                elseif closedOptions[ keyNext ] or areaIsBigNoMerge( goodCornerArea ) then
+                    doDirectionChange = true
+                else
+                    advanceToTheNewArea = true
+                end
+            -- adding a new operation would make a full loop of directions in one area, invalid
+            elseif fullLoopInsideTheCurrentArea then
+                closeOurCurrentAreaAndBail = true
+            -- we backed out of this area + corner + area combo. invalid.
+            elseif closedOptions[ keyNext ] or areaIsBigNoMerge( goodCornerArea ) then
+                doDirectionChange = true
+            -- we're eating ourself ( like the game snake )
+            elseif wrappingIntoALoop then
+                closeOurCurrentAreaAndBail = true
+            -- we've never been to the new area and no issues have popped up
+            else
+                advanceToTheNewArea = true
+            end
+        else
+            if fullLoopInsideTheCurrentArea then
+                closeOurCurrentAreaAndBail = true
+            else
+                doDirectionChange = true
+            end
+        end
+
+        if closeOurCurrentAreaAndBail then
+            --debugoverlay.Cross( managingArea:GetCenter() + offset, 25, 15, Color( 255,0,0 ), true )
+            if managingArea == defaultArea then
+                return
+            else
+                operations, closedOptions = bigMergeGoBack( currOperation, closedOptions, operations )
+            end
+
+        elseif doDirectionChange then
+            local newDirection = directionPlus1
+
+            --debugoverlay.Line( theCorner + offset, managingArea:GetCorner( newDirection ) + offset, 15, Vector( 255,255,255 ), true )
+            currentDirection = newDirection
+
+            -- this preserves entered direction and preserves the area
+            table.insert( operations, 1, { area = managingArea, lastArea = lastArea, justEnteredArea = nil, direction = currentDirection, enteredDirection = currEnteredDirection, theCorner = theCorner } )
+
+        elseif advanceToTheNewArea then
+
+            -- this resets entered direction
+            table.insert( operations, 1, { area = goodCornerArea, lastArea = managingArea, justEnteredArea = true, direction = currentDirection, enteredDirection = currentDirection, theCorner = theCorner } )
+            --debugoverlay.Line( theCorner + offset, goodCornerArea:GetCorner( currentDirection ) + offset, 15, Vector( 255,255,255 ), true )
+        elseif fullLoop then
+            --debugoverlay.Cross( managingArea:GetCenter() + offset, 50, 15, Color( 0,255,0 ), true )
+            break
+        end
+    end
+
+    print( oldTime - SysTime() )
+
+    -- we now identify the loop
+
+    if fullLoop then
+        local sequentialLines = {}
+        for _, currOperation in ipairs( operations ) do
+            local currCorner = currOperation.theCorner
+
+            table.insert( sequentialLines, 1, currCorner )
+
+
+        end
+
+        local oldCorner = defaultArea:GetCorner( defaultDirection )
+        local oldArea = defaultArea
+        local oldOffset = Vector(0)
+
+        for num, currCorner in ipairs( sequentialLines ) do
+
+            local offset = Vector( 0,0,num * 2 )
+            --print( num )
+            --debugoverlay.Line( currCorner + offset, oldCorner + oldOffset, 35, Vector( 255,255,255 ), true )
+            --debugoverlay.Line( currArea:GetCenter(), oldArea:GetCenter(), 15, Vector( 255,255,255 ), true )
+
+            oldCorner = currCorner
+            oldArea = currArea
+            oldOffset = offset
+
+        end
+    end
+
+end
+
+concommand.Add( "nav_findBigMergeOpportunities", findBigMergeOpportunities, nil, "Clone of navmesh_generate_smartish. Uses every player spawnpoint on the map as a navmesh seed.", FCVAR_NONE )
+-- [[ ABOVE IS NOT IMPLEMENTED ]]

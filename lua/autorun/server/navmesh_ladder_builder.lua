@@ -142,6 +142,9 @@ local function patchLadderCommandManual( caller, doSnap )
         local point1 = Vector( point0.x, point0.y, pos.z )
         if doSnap then
             local bottom, top = getLadderBotTop( currPatchin )
+            local laddersUp = ( top - bottom ):GetNormalized()
+            top = top + laddersUp * 3200
+            bottom = bottom + -laddersUp * 3200
             _, point0 = util.DistanceToLine( bottom, top, caller.navopti_manualpatch_point0 )
             _, point1 = util.DistanceToLine( bottom, top, pos )
 
@@ -157,7 +160,13 @@ local function patchLadderCommandManual( caller, doSnap )
         end
         local dir = ladderDir( patchBottom, patchTop, caller )
 
-        navmesh.CreateNavLadder( patchTop + -dir * offsetFromCenter, patchBottom + -dir * offsetFromCenter, ladderWidth, dir, 25 )
+        local ladderTop = patchTop + -dir * offsetFromCenter
+        local ladderBottom = patchBottom + -dir * offsetFromCenter
+
+        --debugoverlay.Cross( ladderTop, 10, 5, color_white, true )
+        --debugoverlay.Cross( ladderBottom, 10, 5, color_white, true )
+
+        navmesh.CreateNavLadder( ladderTop, ladderBottom, ladderWidth, dir, 25 )
         if doSnap then
             ladderedThisSession[tostring( roundedPosOf( currPatchin ) )] = true
 
@@ -184,6 +193,9 @@ local function patchLadderCommandManual( caller, doSnap )
         local point1 = Vector( point0Timer.x, point0Timer.y, posTimer.z )
         if doSnap then
             local bottom, top = getLadderBotTop( currPatchinTimer )
+            local laddersUp = ( top - bottom ):GetNormalized()
+            top = top + laddersUp * 3200
+            bottom = bottom + -laddersUp * 3200
             _, point0Timer = util.DistanceToLine( bottom, top, caller.navopti_manualpatch_point0 )
             _, point1 = util.DistanceToLine( bottom, top, posTimer )
 

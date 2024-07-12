@@ -30,13 +30,23 @@ local tpExits = {
     "info_teleport_destination",
 }
 
+util.AddNetworkString( "navoptimizer_nag" )
+
 table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, spawnTypes )
 table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, tpExits )
 
 local callerPersist = nil
 local bigNegativeZ = Vector( 0, 0, -3000 )
 local startOffset = Vector( 0, 0, 100 )
-local blockPrintCenter = CreateConVar( "navoptimizer_blockprintcenters", 0, { FCVAR_ARCHIVE, FCVAR_CHEAT } )
+local blockPrintCenter = CreateConVar( "navoptimizer_blockprintcenters", 0, { FCVAR_ARCHIVE } )
+local blockPrintConsole = CreateConVar( "navoptimizer_blockprintconsole", 0, { FCVAR_ARCHIVE } )
+
+local function nag( ply )
+    if not IsValid( ply ) then return end
+    net.Start( "navoptimizer_nag" )
+    net.Send( ply )
+
+end
 
 function NAVOPTIMIZER_tbl.getFloorTr( pos )
     local traceDat = {
@@ -146,7 +156,7 @@ local function IsUnderDisplacementExtensive( pos )
 
 end
 
-local function areaIsEntirelyOverDisplacements( area )
+function NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( area )
     local positions = {
         area:GetCorner( 0 ),
         area:GetCorner( 1 ),
@@ -167,7 +177,7 @@ function NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
     if not IsValid( callerPersist ) then
         print( msg )
 
-    elseif not blockPrintCenter:GetBool() then
+    elseif not blockPrintConsole:GetBool() then
         PrintMessage( HUD_PRINTCONSOLE, msg )
 
     end
@@ -439,9 +449,7 @@ local fiveSqared = 5^2
 
 local function navAreaGetCloseCorners( pos, areaToCheck )
 
-    if not areaToCheck then return end
-    if not areaToCheck.isValid then return end
-    if not areaToCheck:isValid() then return end
+    if not IsValid( areaToCheck ) then return end
     local toReturn = nil
     local closeCorners = {}
 
@@ -472,7 +480,6 @@ function navAreasCanMerge( start, next )
         probablyBreakingStairs = true
         -- ok these are coplanar, and they're both stairs... i'll let this slide....
         if start:IsCoplanar( next ) and start:HasAttributes( NAV_MESH_STAIRS ) and next:HasAttributes( NAV_MESH_STAIRS ) then
-            bothstairs = true
             probablyBreakingStairs = nil
 
         end
@@ -553,10 +560,10 @@ function navAreasCanMerge( start, next )
         -- areas are far apart in height, the artifact will be big
         if zDifference > 10 then
             -- if they're both on displacements then we can let it slide
-            local startIsOnDisplacement = areaIsEntirelyOverDisplacements( start )
+            local startIsOnDisplacement = NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( start )
             if not startIsOnDisplacement then return false, 0, NULL end
 
-            local nextIsOnDisplacement = areaIsEntirelyOverDisplacements( next )
+            local nextIsOnDisplacement = NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( next )
             if not nextIsOnDisplacement then return false, 0, NULL end
 
         end
@@ -584,9 +591,9 @@ function navmeshAttemptMerge( start, next )
     local twoWayConnections     = {}
 
     for key, twoWayArea in ipairs( connectionsFrom ) do
-        if not start or not start.IsValid or not start:IsValid() then continue end
-        if not next or not next.IsValid or not next:IsValid() then continue end
-        if not twoWayArea or not twoWayArea.IsValid or not twoWayArea:IsValid() then continue end
+        if not IsValid( start ) then continue end
+        if not IsValid( next ) then continue end
+        if not IsValid( twoWayArea ) then continue end
 
         if ( start:IsConnected( twoWayArea ) or next:IsConnected( twoWayArea ) ) or ( twoWayArea:IsConnected( start ) or twoWayArea:IsConnected( next ) ) then
             table.insert( twoWayConnections, #twoWayConnections + 1, twoWayArea )
@@ -710,7 +717,7 @@ function navmeshAttemptMerge( start, next )
     local stairs = start:HasAttributes( NAV_MESH_STAIRS ) or next:HasAttributes( NAV_MESH_STAIRS )
 
     local newArea = navmesh.CreateNavArea( NECorner, SWCorner )
-    if not newArea or not newArea.IsValid or not newArea:IsValid() then return false, 0, NULL end -- this failed, dont delete the old areas
+    if not IsValid( newArea ) then return false, 0, NULL end -- this failed, dont delete the old areas
 
     start:Remove()
     next:Remove()
@@ -728,15 +735,15 @@ function navmeshAttemptMerge( start, next )
     end
 
     for _, fromArea in pairs( connectionsFrom ) do
-        if not fromArea or not fromArea.IsValid or not fromArea:IsValid() then continue end
+        if not IsValid( fromArea ) then continue end
         newArea:ConnectTo( fromArea )
     end
     for _, toArea in pairs( oneWayConnectionsTo ) do
-        if not toArea or not toArea.IsValid or not toArea:IsValid() then continue end
+        if not IsValid( toArea ) then continue end
         toArea:ConnectTo( newArea )
     end
     for _, twoWayArea in pairs( twoWayConnections ) do
-        if not twoWayArea or not twoWayArea.IsValid or not twoWayArea:IsValid() then continue end
+        if not IsValid( twoWayArea ) then continue end
         newArea:ConnectTo( twoWayArea )
         twoWayArea:ConnectTo( newArea )
     end
@@ -808,8 +815,9 @@ end
 local forceExpensiveMerge = false
 local generateCheapNavmesh = false
 
-local canDoGlobalMerge = true
-local doingGlobalMerge = false
+NAVOPTIMIZER_tbl.canDoGlobalMerge = NAVOPTIMIZER_tbl.canDoGlobalMerge or true
+NAVOPTIMIZER_tbl.doingGlobalMerge = NAVOPTIMIZER_tbl.doingGlobalMerge or false
+
 local areasToMerge = {}
 local areasToMergeCount = 0
 local mergeIndex = 0
@@ -907,7 +915,7 @@ local function getComprehensiveSeedPositions( justReturn )
             if not justReturn then
                 local nearNav = NAVOPTIMIZER_tbl.getNearestNav( seedEntPos, 1000 )
 
-                if nearNav and nearNav.IsValid and nearNav:IsValid() then
+                if IsValid( nearNav ) then
                     local closestToPos = nearNav:GetClosestPointOnArea( seedEntPos )
                     closestToPos.z = seedEntPos.z
                     if seedEntPos:Distance( closestToPos ) < 50 then continue end
@@ -942,7 +950,7 @@ end
 
 local function navAddSeedsUnderPlayers( justReturn )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if canDoGlobalMerge ~= true then return end --don't interrupt!
+    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
 
     local plys = player.GetAll()
     local extraSeeds = {}
@@ -974,7 +982,7 @@ end
 
 local function navAddEasyNavmeshSeeds()
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if canDoGlobalMerge ~= true then return end --don't interrupt!
+    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
 
     -- add seed positions for every spawnpoint
     local extraSeeds = #getComprehensiveSeedPositions()
@@ -1004,7 +1012,9 @@ end
 
 local slopeLimit = 0.55
 local slopeLimitSeed = slopeLimit * 1.5
-local incrementalRange = 6000
+local incrementalRange = 5000
+local trimmedSeedRange = 6000
+local maxTrimmedSeedsAdded = 1000
 
 -- top 10 function names
 local function addTrimmedSeedsAroundPointsInTableToOtherTable( seedSourceTable, tableToAddTo )
@@ -1020,18 +1030,22 @@ local function addTrimmedSeedsAroundPointsInTableToOtherTable( seedSourceTable, 
         local rotatedDir = forwardAng:Forward()
         for index = -2, 2 do
             local dirOffsetted = rotatedDir + Vector( 0, 0, index / 5 )
-            -- do seeds "far away" first, leads to less borders w/ dense areas, between generated circles
             table.insert( checkOffsets, dirOffsetted * math.Rand( 1.2, 1.5 ) )
-            table.insert( checkOffsets, dirOffsetted * math.Rand( 0.45, 1.2 ) )
             table.insert( checkOffsets, dirOffsetted * math.Rand( 1, 1.2 ) )
+            table.insert( checkOffsets, dirOffsetted * math.Rand( 0.25, 1.2 ) )
+            table.insert( checkOffsets, dirOffsetted * math.Rand( 0.05, 0.25 ) )
 
         end
     end
 
+    table.Shuffle( checkOffsets )
+
     -- do the cheap filtering early
     for _, extraSeed in ipairs( seedSourceTable ) do
         for _, offset in ipairs( checkOffsets ) do
-            local offsetScaled = offset * incrementalRange
+            if newSeedsAdded > maxTrimmedSeedsAdded then return newSeedsAdded end
+
+            local offsetScaled = offset * trimmedSeedRange
             local seedPosOffsetted = extraSeed + offsetScaled
             if not util.IsInWorld( seedPosOffsetted ) then continue end
             if posHasContent( seedPosOffsetted, CONTENTS_SOLID ) then continue end
@@ -1041,18 +1055,18 @@ local function addTrimmedSeedsAroundPointsInTableToOtherTable( seedSourceTable, 
             local valid, seedPosFloored, tr = snappedToFloor( seedPosOffsetted )
             if not valid then continue end
             if tr.HitSky then continue end
-            if tr.HitTexture == "TOOLS/TOOLSNODRAW" then continue end
+            if string.find( tr.HitTexture, "NODRAW" ) then continue end
             if tr.HitNormal.z < slopeLimitSeed then continue end
 
-            local nearNav = navmesh.GetNearestNavArea( seedPosFloored, false, 1000, false, true, -2 )
-            if nearNav and nearNav.IsValid and nearNav:IsValid() then
+            if anyAreCloserThan( tableToAddTo, seedPosFloored, 75, 50 ) == true then continue end
+
+            local nearNav = navmesh.GetNearestNavArea( seedPosFloored, false, 1000, true, true, -2 )
+            if IsValid( nearNav ) then
                 local closestToPos = nearNav:GetClosestPointOnArea( seedPosFloored )
                 closestToPos.z = seedPosFloored.z
-                if seedPosFloored:Distance( closestToPos ) < 150 then continue end
+                if seedPosFloored:Distance( closestToPos ) < 75 then continue end
 
             end
-
-            if anyAreCloserThan( tableToAddTo, seedPosFloored, 150, 75 ) == true then continue end
 
             newSeedsAdded = newSeedsAdded + 1
             table.insert( tableToAddTo, seedPosFloored )
@@ -1081,7 +1095,7 @@ local CurTime = CurTime
 function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
 
-    if canDoGlobalMerge ~= true then return end --don't interrupt!
+    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
@@ -1171,6 +1185,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msgDone )
             printCenterTimed( msgDone, 30 )
             if IsValid( callerPersist ) then
+
                 -- fix the command after!
                 -- dont think dedicated servers need these restored
                 callerPersist:ConCommand( "nav_clear_selected_set" )
@@ -1179,8 +1194,9 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
             end
 
+            nag( callerPersist )
+            navmesh.ClearWalkableSeeds()
             hook.Run( "navoptimizer_done_gencheapexpanded", doneType )
-
             return
 
         end
@@ -1231,12 +1247,12 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
         if downTr.HitNormal.z < slopeLimitSeed then return end
 
         local nearNav = navmesh.GetNearestNavArea( seedPosUp25, true, 50, true, true, -2 )
-        if nearNav and nearNav.IsValid and nearNav:IsValid() then return end
+        if IsValid( nearNav ) then return end
 
         local nearNavLooseCriteria = navmesh.GetNearestNavArea( seedPosUp25, true, 150, false, false, -2 )
 
         -- ok so there's an area nearby
-        if nearNavLooseCriteria and nearNavLooseCriteria.IsValid and nearNavLooseCriteria:IsValid() then
+        if IsValid( nearNavLooseCriteria ) then
             local canSeeStrictDat = {
                 mask = MASK_SOLID_BRUSHONLY,
                 start = seedPosUp25,
@@ -1268,11 +1284,16 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
         local threshSlow = ( realSeedsCount / 4 )
         -- when closer to the end, generate more seeds in one go
         local threshMedium = ( realSeedsCount / 2 )
+
+        local impatienceOfGenerator = seedProgress
+
+        local areaCount = #navmesh.GetAllNavAreas()
+
         local batchMax = 10
-        if seedProgress < threshSlow then
+        if impatienceOfGenerator < threshSlow and areaCount < 5000 then
             batchMax = 1
 
-        elseif seedProgress < threshMedium then
+        elseif impatienceOfGenerator < threshMedium and areaCount < 10000 then
             batchMax = 4
 
         end
@@ -1306,11 +1327,11 @@ end
 
 
 local function navMeshGlobalMerge( caller )
-    if canDoGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
-    canDoGlobalMerge = false
-    doingGlobalMerge = true
+    NAVOPTIMIZER_tbl.canDoGlobalMerge = false
+    NAVOPTIMIZER_tbl.doingGlobalMerge = true
     hook.Add( "Tick", "navmeshGlobalMergeStaggeredThink", NAVOPTIMIZER_tbl.navMeshGlobalMergeThink )
 
     mergeIndex = 0
@@ -1335,8 +1356,11 @@ end
 -- old command
 local function navMeshGlobalMergeSingular( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if canDoGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
     navMeshGlobalMerge( caller )
+
+    local msg = "Singular globalmerging..."
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
     globalMergeRepeat = false
 
 end
@@ -1344,24 +1368,34 @@ end
 -- main command
 local function navMeshGlobalMergeAuto( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if canDoGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
     if blockFinalAnalyze ~= true then
+        local msg = "Globalmerging... & finishing with a nav_analyze"
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
+
         local wasOriginallyCheap = getNavmeshIsCheap()
         if wasOriginallyCheap and forceExpensiveMerge == false then -- force a cheap nav_analyze?
             generateCheapNavmesh = true
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Originally cheap navmesh detected. Will nav_analyze cheap... \nnavmesh_override_expensive to override." )
+
         elseif wasOriginallyCheap and forceExpensiveMerge == true then
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Forcing expensive nav_analyze..." )
+
         end
     end
     navMeshGlobalMerge( caller )
+
     globalMergeRepeat = true
     initialRepeatCount = #navmesh.GetAllNavAreas()
+
 end
 
 local function navMeshGlobalMergeAutoNoAnalyze( caller )
     blockFinalAnalyze = true
     navMeshGlobalMergeAuto( caller )
+    local msg = "Globalmerging... Not analyzing at the end."
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
+
 end
 
 
@@ -1425,7 +1459,7 @@ local function navMeshGlobalMergePrintResults()
         return
     end
 
-    if not doingGlobalMerge and globalMergeResultTime > CurTime() then -- mt everest
+    if not NAVOPTIMIZER_tbl.doingGlobalMerge and globalMergeResultTime > CurTime() then -- mt everest
         local CONGRATS = ""
         if doneMergedCount == 0 then
             CONGRATS = "Your navmesh is optimized, Congragulations"
@@ -1444,6 +1478,7 @@ local function navMeshGlobalMergePrintResults()
 end
 
 local function finishGlobalMerge( type )
+    nag( callerPersist )
     hook.Run( "navoptimizer_done_globalmerge", type )
     hook.Add( "Tick", "navmeshGlobalMergePrintResults", navMeshGlobalMergePrintResults )
     hook.Remove( "Tick", "navmeshGlobalMergeStaggeredThink" )
@@ -1453,13 +1488,13 @@ end
 -- this function is so spaghetti that an italian would think it is above spaghetti, beyond spaghetti, something, something else....
 function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
     if not SERVER then return end
-    if doingGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.doingGlobalMerge ~= true then return end
     local done = nil
 
     -- go through the list faster when we're not merging anything
     local operationsCount = 6
     if operationsWithoutMerges >= 20 then
-        -- lags the editor when you merge fast on big maps 
+        -- lags the editing player when you merge fast on big maps 
         operationsCount = math.Round( math.Clamp( #areasToMerge / 50, 100, 1000 ) )
     elseif operationsWithoutMerges >= 10 then
         operationsCount = 200
@@ -1490,8 +1525,8 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
         mergeIndex = mergeIndex + operationsCount
 
     elseif done then
-        canDoGlobalMerge = true
-        doingGlobalMerge = false
+        NAVOPTIMIZER_tbl.canDoGlobalMerge = true
+        NAVOPTIMIZER_tbl.doingGlobalMerge = false
         if IsValid( callerPersist ) then
             callerPersist:ConCommand( "nav_compress_id" )
             callerPersist:ConCommand( "nav_check_stairs" )
@@ -1504,10 +1539,19 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
 
         -- doing a repeating one
         if globalMergeRepeat == true then
-            -- merge was done this loop, keep merging
+            -- a merge was done this loop, keep merging
             if doneMergedCount > 0 then
                 repeatMergedCount = repeatMergedCount + doneMergedCount
                 repeatMergedArea = repeatMergedArea + doneMergedArea
+
+                local sOrNoS = "s"
+                if doneMergedCount == 1 then
+                    sOrNoS = ""
+
+                end
+                local msg = "Done " .. doneMergedCount .. " merge" .. sOrNoS .. "."
+                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
+
                 navMeshGlobalMerge( callerPersist )
             -- no merges were done this loop, and we're not on the first loop, call it validated as done!
             elseif repeatMergedCount > 0 then
@@ -1549,6 +1593,13 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
                 else
                     NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
                 end
+                local sOrNoS = "s"
+                if repeatMergedCount == 1 then
+                    sOrNoS = ""
+
+                end
+                local msg = "SUCCESS!\nGlobalmerge finished. Did " .. repeatMergedCount .. " merge" .. sOrNoS .. " total."
+                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
                 finishGlobalMerge( 1 )
             -- 0 total merged areas, command did nothing.
             elseif repeatMergedCount == 0 then
@@ -1556,6 +1607,8 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
                 congragulated = true
                 globalMergeResultTime = CurTime() + 15
                 NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+                local msg = "Globalmerge finished, areas were as merged as possible."
+                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
                 finishGlobalMerge( 2 )
             end
         -- one-loop merge, will probably deprecate this
@@ -1564,115 +1617,13 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
             congragulated = nil
             globalMergeResultTime = CurTime() + 15
             NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+            local msg = "Globalmerge finished. Did " .. repeatMergedCount .. " merges."
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
             finishGlobalMerge( 3 )
 
         end
     end
 end
-
--- find small areas that have connections on all 4 sides, that are on displacements
-local function handlePotentialDisplacementArea( area )
-    if not area or not area.IsValid or not area:IsValid() then return end
-
-    if area:HasAttributes( NAV_MESH_CROUCH ) then return end
-    if area:HasAttributes( NAV_MESH_STAIRS ) then return end
-    if area:HasAttributes( NAV_MESH_NO_MERGE ) then return end
-    if area:HasAttributes( NAV_MESH_TRANSIENT ) then return end
-    if area:HasAttributes( NAV_MESH_OBSTACLE_TOP ) then return end
-
-    local perfectlyFlat = true
-    local lastZ
-    for ind = 0, 3 do
-        local currZ = area:GetCorner( ind ).z
-        if currZ ~= lastZ then perfectlyFlat = false break end
-        lastZ = currZ
-
-    end
-
-    -- even if it is on a displacement, perfectly flat displacements arent gonna make small areas
-    if perfectlyFlat then return end
-
-    local biggestLength = math.max( area:GetSizeX(), area:GetSizeY() )
-
-    local bigLength = 80
-    -- be more aggressive if area is a trash underwater one
-    if area:IsUnderwater() then
-        bigLength = 140
-
-    end
-
-    if biggestLength > bigLength then return end
-
-    local adjAreas = area:GetAdjacentAreas()
-    if #adjAreas <= 3 then return end
-
-    if not areaIsEntirelyOverDisplacements( area ) then return end
-
-    area:Remove()
-
-    return true
-
-end
-
-local navmeshRemoveSmallAreasOnDisplacements = nil
-local navmeshRemoveSmallAreasOnDisplacementsCor = nil
-
-local function navmeshStartDisplacementTrim( caller )
-    if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if canDoGlobalMerge ~= true then return end --don't interrupt!
-    callerPersist = caller
-    NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
-
-    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing small areas with more than 3 neighbors on displacements!" )
-    canDoGlobalMerge = false
-    navmeshRemoveSmallAreasOnDisplacements = true
-
-end
-
-local function thinkHookNavmeshTrim()
-    if not navmeshRemoveSmallAreasOnDisplacements then return end
-    if not navmeshRemoveSmallAreasOnDisplacementsCor then -- create coroutine
-        local theFunc = function()
-            local removedCount = 0
-            local allAreas = navmesh.GetAllNavAreas()
-            local allAreaCount = #allAreas
-            for progress, area in ipairs( allAreas ) do
-                coroutine.yield()
-
-                NAVOPTIMIZER_tbl.printCenterAlias( "AREA " .. progress .. " / " .. allAreaCount .. "\n" .. removedCount .. " \"Redundant\" displacement areas removed so far..." )
-                local removed = handlePotentialDisplacementArea( area )
-
-                if removed then
-                    removedCount = removedCount + 1
-
-                end
-            end
-            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "SUCCESS!\nRemoved " .. removedCount .. " small areas, with more than 3 neighbors, on displacements." )
-            coroutine.yield( "done" )
-
-        end
-
-        navmeshRemoveSmallAreasOnDisplacementsCor = coroutine.create( theFunc )
-
-    elseif navmeshRemoveSmallAreasOnDisplacementsCor then -- run
-        local oldTime = SysTime()
-        while math.abs( oldTime - SysTime() ) < 0.0005 do
-            local noErrors, result = coroutine.resume( navmeshRemoveSmallAreasOnDisplacementsCor )
-            if noErrors == false then
-                ErrorNoHaltWithStack( result )
-
-            elseif result == "done" then
-                navmeshRemoveSmallAreasOnDisplacements = nil
-                navmeshRemoveSmallAreasOnDisplacementsCor = nil
-                canDoGlobalMerge = true
-                break
-
-            end
-        end
-    end
-end
-
-hook.Add( "Tick", "navmeshRemoveSmallAreasOnDisplacements", thinkHookNavmeshTrim )
 
 
 concommand.Add( "nav_mark_walkble_auto", navAddEasyNavmeshSeeds, nil, "Clone of navmesh_mark_walkble_auto. Uses every player spawnpoint, door, ladder dismount point, prop_physics, and teleport exit on the map as a navmesh seed.", FCVAR_NONE )
@@ -1689,8 +1640,6 @@ concommand.Add( "navmesh_generate_cheap_expanded", navGenerateCheapExpanded, nil
 concommand.Add( "nav_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_expanded. Inital seeds are only placed under players.", FCVAR_NONE )
 concommand.Add( "navmesh_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_plyseeds.", FCVAR_NONE )
 
-
-concommand.Add( "navmesh_trim_displacement_areas", navmeshStartDisplacementTrim, nil, "Removes small, 'redundant' areas on top of displacements", FCVAR_NONE )
 
 concommand.Add( "navmesh_ischeap", navmeshIsCheapCommand, nil, "Was this navmesh generated without visibility data?", FCVAR_NONE )
 

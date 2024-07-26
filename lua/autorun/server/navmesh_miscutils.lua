@@ -207,6 +207,7 @@ local function beginDeepWaterTrim( caller, _, depthOverride )
 
 end
 local warned
+local IsValid = IsValid
 
 local function navmeshDeleteAllAreas( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
@@ -222,14 +223,57 @@ local function navmeshDeleteAllAreas( caller )
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
     local removedAreas = 0
+    local done = nil
 
-    for _, area in ipairs( navmesh.GetAllNavAreas() ) do
-        area:Remove()
-        removedAreas = removedAreas + 1
+    local blockSize = 500
+    local areas = navmesh.GetAllNavAreas()
+    local areaCount = #areas
 
+    -- if less than 10k areas
+    if areaCount < blockSize * 20 then
+        for _, area in ipairs( areas ) do
+            area:Remove()
+            removedAreas = removedAreas + 1
+
+        end
+        done = true
+
+    -- otherwise blocks
+    else
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "TOO MANY AREAS! ( " .. areaCount .. " areas! )\nRemoving in blocks!" )
+        local blocks = math.ceil( areaCount / blockSize )
+        local timeMul = 0.25
+
+        for currBlock = 0, blocks do
+            local time = currBlock * timeMul
+            timer.Simple( time, function()
+                local blockRemoved = 0
+                local blockStart = currBlock * blockSize
+                local blockEnd = ( currBlock + 1 ) * blockSize
+
+                for id = blockStart, blockEnd do
+                    local area = areas[id]
+
+                    if IsValid( area ) then
+                        area:Remove()
+                        removedAreas = removedAreas + 1
+                        blockRemoved = blockRemoved + 1
+
+                    end
+                end
+                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed a block of " .. blockRemoved .. " areas." )
+            end )
+        end
+        timer.Simple( ( blocks * timeMul ) + timeMul, function()
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Finishing up..." )
+            for _, area in ipairs( navmesh.GetAllNavAreas() ) do
+                area:Remove()
+                removedAreas = removedAreas + 1
+
+            end
+            done = true
+        end )
     end
-
-    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedAreas .. " areas" )
 
     local removedLadders = 0
     for id = 1, 1000 do
@@ -241,8 +285,19 @@ local function navmeshDeleteAllAreas( caller )
         end
     end
 
-    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedLadders .. " navladders" )
+    timer.Create( "navmesh_remove_allareas", 0.5, 0, function()
+        if not done then return end
+        timer.Remove( "navmesh_remove_allareas" )
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "DONE!" )
 
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedAreas .. " areas" )
+
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedLadders .. " navladders" )
+
+        hook.Run( "navoptimizer_done_removingallareas" )
+        NAVOPTIMIZER_tbl.nag( callerPersist )
+
+    end )
 end
 
 

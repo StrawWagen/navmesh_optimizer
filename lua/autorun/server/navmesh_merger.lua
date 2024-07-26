@@ -41,7 +41,7 @@ local startOffset = Vector( 0, 0, 100 )
 local blockPrintCenter = CreateConVar( "navoptimizer_blockprintcenters", 0, { FCVAR_ARCHIVE } )
 local blockPrintConsole = CreateConVar( "navoptimizer_blockprintconsole", 0, { FCVAR_ARCHIVE } )
 
-local function nag( ply )
+function NAVOPTIMIZER_tbl.nag( ply )
     if not IsValid( ply ) then return end
     net.Start( "navoptimizer_nag" )
     net.Send( ply )
@@ -1082,10 +1082,12 @@ local function doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, rea
     local msgGenerationProgress = "Generating batch of... " .. batchSeedsPlaced .. " seeds at SEED... " .. seedProgress .. " / " .. realSeedsCount
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msgGenerationProgress )
 
-    RunConsoleCommand( "nav_max_view_distance", "1" )
-    RunConsoleCommand( "nav_generate_incremental_range", tostring( incrementalRange ) )
-    RunConsoleCommand( "nav_generate_incremental" )
+    timer.Simple( 0.1, function()
+        RunConsoleCommand( "nav_max_view_distance", "1" )
+        RunConsoleCommand( "nav_generate_incremental_range", tostring( incrementalRange ) )
+        RunConsoleCommand( "nav_generate_incremental" )
 
+    end )
 end
 
 local timerName = "navoptimizer_true_incremental_generation"
@@ -1155,8 +1157,13 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     local purgeSelectedSet = nil
     local blockTimerRun = 0
 
+    local dontGetAheadOfYourself = 1
+    local lastIncrementalGen = CurTime()
+    local lastIncrementalFinish = CurTime()
+
     timer.Create( timerName, 0.015, 0, function()
-        if blockTimerRun > CurTime() then return end
+        local cur = CurTime()
+        if blockTimerRun > cur then return end
         -- we are done!
         if #realSeeds <= 0 then
             -- yeet the timer
@@ -1194,7 +1201,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
             end
 
-            nag( callerPersist )
+            NAVOPTIMIZER_tbl.nag( callerPersist )
             navmesh.ClearWalkableSeeds()
             hook.Run( "navoptimizer_done_gencheapexpanded", doneType )
             return
@@ -1204,7 +1211,8 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
         NAVOPTIMIZER_tbl.printCenterAlias( "SEED " .. seedProgress .. " / " .. realSeedsCount )
 
         if navmesh.IsGenerating() then
-            blockTimerRun = CurTime() + 0.1
+            lastIncrementalFinish = SysTime()
+            blockTimerRun = cur + 0.25
             return
 
         end
@@ -1215,11 +1223,12 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         end
 
-        -- just generate the last seeds
+        -- we're almost done!
+        -- just generate anything!
         if batchSeedsPlaced >= 1 and #realSeeds <= 10 then
             batchSeedsPlaced = 0
             doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, realSeedsCount )
-            blockTimerRun = CurTime() + 0.1
+            blockTimerRun = cur + 0.5
             return
 
         end
@@ -1298,12 +1307,24 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         end
 
+        -- if last gen took a while, we're probably navmeshing a big open map
+        -- big batches on these maps can crash the game, so dont do that!
+        local tookAWhilePunishment = math.abs( lastIncrementalGen - lastIncrementalFinish )
+        tookAWhilePunishment = tookAWhilePunishment / 10
+
+        batchMax = batchMax - tookAWhilePunishment
+
+        batchMax = math.Clamp( batchMax, 1, dontGetAheadOfYourself )
+
         local seedsNeededToBatch = math.Clamp( realSeedsCount / 150, 1, batchMax )
         if batchSeedsPlaced >= seedsNeededToBatch then
             doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, realSeedsCount )
             purgeSelectedSet = true
             batchSeedsPlaced = 0
-            blockTimerRun = CurTime() + 0.1
+
+            blockTimerRun = cur + 0.5
+            lastIncrementalGen = SysTime()
+            dontGetAheadOfYourself = dontGetAheadOfYourself + 1
 
         end
 
@@ -1478,7 +1499,7 @@ local function navMeshGlobalMergePrintResults()
 end
 
 local function finishGlobalMerge( type )
-    nag( callerPersist )
+    NAVOPTIMIZER_tbl.nag( callerPersist )
     hook.Run( "navoptimizer_done_globalmerge", type )
     hook.Add( "Tick", "navmeshGlobalMergePrintResults", navMeshGlobalMergePrintResults )
     hook.Remove( "Tick", "navmeshGlobalMergeStaggeredThink" )

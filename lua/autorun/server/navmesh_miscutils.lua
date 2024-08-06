@@ -110,6 +110,7 @@ local function navmeshStartDisplacementTrim( caller )
 
 end
 
+
 local function handlePotentialDeepUnderwaterArea( area, depth )
     if not area or not area.IsValid or not area:IsValid() then return end
 
@@ -206,13 +207,77 @@ local function beginDeepWaterTrim( caller, _, depthOverride )
     hook.Add( "Tick", "navmeshRemoveAreasDeepUnderwater", thinkHookDeepWaterTrim )
 
 end
+
+local offset = Vector( 0, 0, 15 )
+
+function navmeshIsCorrupted()
+    local allAreas = navmesh.GetAllNavAreas()
+    local areaCount = #allAreas
+    local corruptedAreas = {}
+    local brokenCount = 0
+    local normalCount = 0
+
+    for _, area in ipairs( allAreas ) do
+        local cornersToBeBroken = 2
+        if not util.IsInWorld( area:GetCenter() + offset ) then
+            cornersToBeBroken = 1
+
+        end
+        local brokenCorners = 0
+        for cornerId = 0, 3 do
+            local offsettedCorner = area:GetCorner( cornerId ) + offset
+            if not util.IsInWorld( offsettedCorner ) then
+                brokenCorners = brokenCorners + 1
+
+            elseif NAVOPTIMIZER_tbl.getFloorTr( offsettedCorner ).HitPos:Distance( offsettedCorner ) > 200 then
+                brokenCorners = brokenCorners + 1
+
+            end
+        end
+        if brokenCorners > cornersToBeBroken then
+            brokenCount = brokenCount + 1
+            table.insert( corruptedAreas, area )
+
+        else
+            normalCount = normalCount + 1
+
+        end
+
+    end
+
+    local brokenRatio = brokenCount / areaCount
+    local likelyCorrupt = brokenRatio > 0.25
+
+    return likelyCorrupt, brokenRatio, corruptedAreas
+
+end
+
+local function corruptedCommand()
+    local corrupt, ratio = navmeshIsCorrupted()
+    local ratioAsPercent = ratio * 100
+    ratioAsPercent = math.Round( ratioAsPercent )
+
+    if corrupt then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "CORRUPT!\n" .. ratioAsPercent .. "% of areas are either outside the world, or very high off the ground." )
+
+    elseif ratioAsPercent <= 0 then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "NOT corrupt.\nAll areas are inside the world, on the ground" )
+
+    else
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Navmesh is MILDLY corrupt.\n" .. ratioAsPercent .. "% of areas are either outside the world, or very high off the ground." )
+
+    end
+end
+
+
 local warned
 local IsValid = IsValid
 
 local function navmeshDeleteAllAreas( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
-    if not warned then
+    local corrupt = navmeshIsCorrupted()
+    if not corrupt and warned then
         warned = true
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again to proceed." )
         return
@@ -303,5 +368,7 @@ end
 
 concommand.Add( "navmesh_trim_displacement_areas", navmeshStartDisplacementTrim, nil, "Removes small, 'redundant' areas on top of displacements", FCVAR_NONE )
 concommand.Add( "navmesh_trim_deepunderwater_areas", beginDeepWaterTrim, nil, "Removes areas under deep water. ( default >350 units deep )", FCVAR_NONE )
+
+concommand.Add( "navmesh_iscorrupt", corruptedCommand, nil, "Tells you if the navmesh is \"corrupt\", for example if the navmesh was generated on a different map that so happens to share names with the current one.", FCVAR_NONE )
 
 concommand.Add( "navmesh_delete_allareas", navmeshDeleteAllAreas, nil, "Removes ALL navareas.", FCVAR_NONE )

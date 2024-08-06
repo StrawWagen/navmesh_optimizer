@@ -1098,6 +1098,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
 
     if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
+    NAVOPTIMIZER_tbl.canDoGlobalMerge = false
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
@@ -1203,6 +1204,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
             NAVOPTIMIZER_tbl.nag( callerPersist )
             navmesh.ClearWalkableSeeds()
+            NAVOPTIMIZER_tbl.canDoGlobalMerge = true
             hook.Run( "navoptimizer_done_gencheapexpanded", doneType )
             return
 

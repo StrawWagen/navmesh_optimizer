@@ -10,7 +10,7 @@ NAVOPTIMIZER_tbl.interestingEntityClasses = {
 
 }
 
-local spawnTypes = {
+NAVOPTIMIZER_tbl.commonSpawnTypes = {
     "info_player_deathmatch",
     "info_player_combine",
     "info_player_rebel",
@@ -32,7 +32,7 @@ local tpExits = {
 
 util.AddNetworkString( "navoptimizer_nag" )
 
-table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, spawnTypes )
+table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, NAVOPTIMIZER_tbl.commonSpawnTypes )
 table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, tpExits )
 
 local callerPersist = nil
@@ -325,6 +325,26 @@ local function classesUsuallyInsideTheMap()
     end )
 
     return theClasses
+
+end
+
+function NAVOPTIMIZER_tbl.AreasUnderCommonSpawnTypes()
+    local areasUnder = {}
+    local areasUnderIndex = {}
+    for _, seedClass in ipairs( NAVOPTIMIZER_tbl.commonSpawnTypes ) do
+        local seeds = ents.FindByClass( seedClass )
+
+        for _, seedEnt in ipairs( seeds ) do
+            local entsPos = seedEnt:GetPos()
+            local nearest = NAVOPTIMIZER_tbl.getNearestNav( entsPos, 500 )
+            if IsValid( nearest ) and not areasUnderIndex[ nearest ] and nearest:Contains( entsPos ) then
+                table.insert( areasUnder, nearest )
+                areasUnderIndex[ nearest ] = true
+
+            end
+        end
+    end
+    return areasUnder, areasUnderIndex
 
 end
 
@@ -815,7 +835,7 @@ end
 local forceExpensiveMerge = false
 local generateCheapNavmesh = false
 
-NAVOPTIMIZER_tbl.canDoGlobalMerge = NAVOPTIMIZER_tbl.canDoGlobalMerge or true
+NAVOPTIMIZER_tbl.isBusy = NAVOPTIMIZER_tbl.isBusy or false
 NAVOPTIMIZER_tbl.doingGlobalMerge = NAVOPTIMIZER_tbl.doingGlobalMerge or false
 
 local areasToMerge = {}
@@ -950,15 +970,19 @@ end
 
 local function navAddSeedsUnderPlayers( justReturn )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
 
     local plys = player.GetAll()
     local extraSeeds = {}
 
     for _, ply in ipairs( plys ) do
         local valid, plyPos = snappedToFloor( ply:WorldSpaceCenter() )
-        if valid == true then
+        if valid then
             table.insert( extraSeeds, plyPos )
+
+        end
+        local aimValid, plyAimPos = snappedToFloor( ply:GetEyeTrace().HitPos )
+        if aimValid then
+            table.insert( extraSeeds, plyAimPos )
 
         end
     end
@@ -967,6 +991,8 @@ local function navAddSeedsUnderPlayers( justReturn )
         return extraSeeds
 
     end
+
+    if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
 
     for _, currentSeed in ipairs( extraSeeds ) do
         navmesh.AddWalkableSeed( currentSeed, vec_up )
@@ -982,7 +1008,7 @@ end
 
 local function navAddEasyNavmeshSeeds()
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
+    if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
 
     -- add seed positions for every spawnpoint
     local extraSeeds = #getComprehensiveSeedPositions()
@@ -1082,7 +1108,7 @@ local function doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, rea
     local msgGenerationProgress = "Generating batch of... " .. batchSeedsPlaced .. " seeds at SEED... " .. seedProgress .. " / " .. realSeedsCount
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msgGenerationProgress )
 
-    timer.Simple( 0.1, function()
+    timer.Simple( 0.05, function()
         RunConsoleCommand( "nav_max_view_distance", "1" )
         RunConsoleCommand( "nav_generate_incremental_range", tostring( incrementalRange ) )
         RunConsoleCommand( "nav_generate_incremental" )
@@ -1097,8 +1123,8 @@ local CurTime = CurTime
 function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
 
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
-    NAVOPTIMIZER_tbl.canDoGlobalMerge = false
+    if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
+    NAVOPTIMIZER_tbl.isBusy = true
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
@@ -1158,11 +1184,14 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     local purgeSelectedSet = nil
     local blockTimerRun = 0
 
+    local areaCountBeforeGeneration = startingNavareaCount
+    local smallGenerationStepCount = 0
+
     local dontGetAheadOfYourself = 1
     local lastIncrementalGen = CurTime()
     local lastIncrementalFinish = CurTime()
 
-    timer.Create( timerName, 0.015, 0, function()
+    timer.Create( timerName, 0.020, 0, function()
         local cur = CurTime()
         if blockTimerRun > cur then return end
         -- we are done!
@@ -1204,7 +1233,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
             NAVOPTIMIZER_tbl.nag( callerPersist )
             navmesh.ClearWalkableSeeds()
-            NAVOPTIMIZER_tbl.canDoGlobalMerge = true
+            NAVOPTIMIZER_tbl.isBusy = false
             hook.Run( "navoptimizer_done_gencheapexpanded", doneType )
             return
 
@@ -1214,7 +1243,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         if navmesh.IsGenerating() then
             lastIncrementalFinish = SysTime()
-            blockTimerRun = cur + 0.25
+            blockTimerRun = cur + 1
             return
 
         end
@@ -1309,10 +1338,23 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         end
 
+        if math.abs( areaCountBeforeGeneration - areaCount ) < 10 then -- something about this map is breaking this script, we can afford to just brute force it
+            smallGenerationStepCount = math.floor( smallGenerationStepCount + 1 )
+            local maxAdded = 1 + smallGenerationStepCount / 8
+            maxAdded = math.Clamp( maxAdded, 0, 25 )
+            batchMax = batchMax + maxAdded
+
+        else
+            smallGenerationStepCount = smallGenerationStepCount * 0.5 -- really make sure this doesnt get out of hand
+            smallGenerationStepCount = smallGenerationStepCount + -2
+            smallGenerationStepCount = math.max( smallGenerationStepCount, 0 )
+
+        end
+
         -- if last gen took a while, we're probably navmeshing a big open map
         -- big batches on these maps can crash the game, so dont do that!
         local tookAWhilePunishment = math.abs( lastIncrementalGen - lastIncrementalFinish )
-        tookAWhilePunishment = tookAWhilePunishment / 10
+        tookAWhilePunishment = tookAWhilePunishment / 1000
 
         batchMax = batchMax - tookAWhilePunishment
 
@@ -1320,13 +1362,16 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         local seedsNeededToBatch = math.Clamp( realSeedsCount / 150, 1, batchMax )
         if batchSeedsPlaced >= seedsNeededToBatch then
-            doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, realSeedsCount )
             purgeSelectedSet = true
-            batchSeedsPlaced = 0
 
-            blockTimerRun = cur + 0.5
+            blockTimerRun = cur + 0.75
             lastIncrementalGen = SysTime()
             dontGetAheadOfYourself = dontGetAheadOfYourself + 1
+
+            areaCountBeforeGeneration = areaCount
+
+            doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, realSeedsCount )
+            batchSeedsPlaced = 0
 
         end
 
@@ -1350,10 +1395,10 @@ end
 
 
 local function navMeshGlobalMerge( caller )
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
-    NAVOPTIMIZER_tbl.canDoGlobalMerge = false
+    NAVOPTIMIZER_tbl.isBusy = true
     NAVOPTIMIZER_tbl.doingGlobalMerge = true
     hook.Add( "Tick", "navmeshGlobalMergeStaggeredThink", NAVOPTIMIZER_tbl.navMeshGlobalMergeThink )
 
@@ -1379,7 +1424,7 @@ end
 -- old command
 local function navMeshGlobalMergeSingular( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
     navMeshGlobalMerge( caller )
 
     local msg = "Singular globalmerging..."
@@ -1391,7 +1436,7 @@ end
 -- main command
 local function navMeshGlobalMergeAuto( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
     if blockFinalAnalyze ~= true then
         local msg = "Globalmerging... & finishing with a nav_analyze"
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
@@ -1548,7 +1593,7 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
         mergeIndex = mergeIndex + operationsCount
 
     elseif done then
-        NAVOPTIMIZER_tbl.canDoGlobalMerge = true
+        NAVOPTIMIZER_tbl.isBusy = false
         NAVOPTIMIZER_tbl.doingGlobalMerge = false
         if IsValid( callerPersist ) then
             callerPersist:ConCommand( "nav_compress_id" )

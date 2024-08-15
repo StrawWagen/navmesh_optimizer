@@ -32,7 +32,7 @@ end
 
 local function getNearestLadder( pos )
     local ladders = ents.FindByClass( "func_useableladder" )
-    local nearestDistSqr = math.huge
+    local nearestDist = math.huge
 
     local point0
     local point1
@@ -42,16 +42,11 @@ local function getNearestLadder( pos )
         local point0Curr = curr:LocalToWorld( keysCurr["point0"] )
         local point1Curr = curr:LocalToWorld( keysCurr["point1"] )
 
-        local currDist0 = point0Curr:DistToSqr( pos )
-        local currDist1 = point1Curr:DistToSqr( pos )
-        local bestDist = currDist0
-        if currDist1 < bestDist then
-            bestDist = currDist1
+        local currDist = util.DistanceToLine( point0Curr, point1Curr, pos )
 
-        end
-        if bestDist < nearestDistSqr then
+        if currDist < nearestDist then
             nearest = curr
-            nearestDistSqr = bestDist
+            nearestDist = currDist
             point0 = point0Curr
             point1 = point1Curr
 

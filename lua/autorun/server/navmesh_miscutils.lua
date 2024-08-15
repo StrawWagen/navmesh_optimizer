@@ -1,3 +1,6 @@
+
+local IsValid = IsValid
+
 -- find small areas that have connections on all 4 sides, that are on displacements
 local function handlePotentialDisplacementArea( area )
     if not area or not area.IsValid or not area:IsValid() then return end
@@ -84,11 +87,15 @@ local function thinkHookDisplacementTrim()
             local noErrors, result = coroutine.resume( navmeshRemoveSmallAreasOnDisplacementsCor )
             if noErrors == false then
                 ErrorNoHaltWithStack( result )
+                navmeshRemoveSmallAreasOnDisplacements = nil
+                navmeshRemoveSmallAreasOnDisplacementsCor = nil
+                NAVOPTIMIZER_tbl.isBusy = false
+                break
 
             elseif result == "done" then
                 navmeshRemoveSmallAreasOnDisplacements = nil
                 navmeshRemoveSmallAreasOnDisplacementsCor = nil
-                NAVOPTIMIZER_tbl.canDoGlobalMerge = true
+                NAVOPTIMIZER_tbl.isBusy = false
                 break
 
             end
@@ -98,12 +105,12 @@ end
 
 local function navmeshStartDisplacementTrim( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
+    if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing small areas with more than 3 neighbors on displacements!" )
-    NAVOPTIMIZER_tbl.canDoGlobalMerge = false
+    NAVOPTIMIZER_tbl.isBusy = true
     navmeshRemoveSmallAreasOnDisplacements = true
 
     hook.Add( "Tick", "navmeshRemoveSmallAreasOnDisplacements", thinkHookDisplacementTrim )
@@ -122,7 +129,7 @@ local function handlePotentialDeepUnderwaterArea( area, depth )
     -- 350 depth
     for ind = 1, depth do
         offsetVec.z = ind
-        if bit.band( util.PointContents( pos + offsetVec ), CONTENTS_WATER ) <= 0 then 
+        if bit.band( util.PointContents( pos + offsetVec ), CONTENTS_WATER ) <= 0 then
             wasDry = true
             break
 
@@ -172,11 +179,15 @@ local function thinkHookDeepWaterTrim()
             local noErrors, result = coroutine.resume( navmeshRemoveAreasDeepUnderwaterCor )
             if noErrors == false then
                 ErrorNoHaltWithStack( result )
+                navmeshRemoveAreasDeepUnderwater = nil
+                navmeshRemoveAreasDeepUnderwaterCor = nil
+                NAVOPTIMIZER_tbl.isBusy = false
+                break
 
             elseif result == "done" then
                 navmeshRemoveAreasDeepUnderwater = nil
                 navmeshRemoveAreasDeepUnderwaterCor = nil
-                NAVOPTIMIZER_tbl.canDoGlobalMerge = true
+                NAVOPTIMIZER_tbl.isBusy = false
                 break
 
             end
@@ -186,7 +197,7 @@ end
 
 local function beginDeepWaterTrim( caller, _, depthOverride )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end --don't interrupt!
+    if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
@@ -201,12 +212,13 @@ local function beginDeepWaterTrim( caller, _, depthOverride )
     end
 
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing areas in water more than " .. depth .. " units deep." )
-    NAVOPTIMIZER_tbl.canDoGlobalMerge = false
+    NAVOPTIMIZER_tbl.isBusy = true
     navmeshRemoveAreasDeepUnderwater = true
 
     hook.Add( "Tick", "navmeshRemoveAreasDeepUnderwater", thinkHookDeepWaterTrim )
 
 end
+
 
 local offset = Vector( 0, 0, 15 )
 
@@ -246,7 +258,7 @@ function navmeshIsCorrupted()
     end
 
     local brokenRatio = brokenCount / areaCount
-    local likelyCorrupt = brokenRatio > 0.25
+    local likelyCorrupt = brokenRatio > 0.15
 
     return likelyCorrupt, brokenRatio, corruptedAreas
 
@@ -270,20 +282,11 @@ local function corruptedCommand()
 end
 
 
-local warned
-local IsValid = IsValid
-
-local function navmeshDeleteAllAreas( caller )
+function navmeshDeleteAllAreas( areasOverride, dontRemoveLadders, caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.canDoGlobalMerge ~= true then return end
-    local corrupt = navmeshIsCorrupted()
-    if not corrupt and warned then
-        warned = true
-        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again to proceed." )
-        return
+    if NAVOPTIMIZER_tbl.isBusy then return end
 
-    end
-
+    NAVOPTIMIZER_tbl.isBusy = true
     callerPersist = caller
     NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
 
@@ -291,7 +294,7 @@ local function navmeshDeleteAllAreas( caller )
     local done = nil
 
     local blockSize = 500
-    local areas = navmesh.GetAllNavAreas()
+    local areas = areasOverride or navmesh.GetAllNavAreas()
     local areaCount = #areas
 
     -- if less than 10k areas
@@ -341,12 +344,15 @@ local function navmeshDeleteAllAreas( caller )
     end
 
     local removedLadders = 0
-    for id = 1, 1000 do
-        local ladder = navmesh.GetNavLadderByID( id )
-        if IsValid( ladder ) then
-            ladder:Remove()
-            removedLadders = removedLadders + removedLadders
 
+    if not dontRemoveLadders then
+        for id = 1, 1000 do
+            local ladder = navmesh.GetNavLadderByID( id )
+            if IsValid( ladder ) then
+                ladder:Remove()
+                removedLadders = removedLadders + removedLadders
+
+            end
         end
     end
 
@@ -357,18 +363,167 @@ local function navmeshDeleteAllAreas( caller )
 
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedAreas .. " areas" )
 
-        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedLadders .. " navladders" )
+        if not dontRemoveLadders then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removed " .. removedLadders .. " navladders" )
+
+        end
 
         hook.Run( "navoptimizer_done_removingallareas" )
+        NAVOPTIMIZER_tbl.isBusy = false
         NAVOPTIMIZER_tbl.nag( callerPersist )
 
     end )
 end
 
+local warned
+
+local function navmeshDeleteAllAreasCmd( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+    local corrupt = navmeshIsCorrupted()
+    local worthWarning = not corrupt and IsValid( caller )
+    if worthWarning and not warned then -- start removing corrupt areas NOW!
+        warned = true
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again to proceed." )
+        return
+
+    end
+    navmeshDeleteAllAreas( nil, caller )
+
+end
+
+
+local skyboxAreasLastCount = -1
+local cachedAreasInSkybox = {}
+local cachedAreasInSkyboxIndex = {}
+local skyboxLastReturnReason = "n/a"
+
+local function navareasInSkybox()
+    local currCount = navmesh.GetNavAreaCount()
+    if currCount == skyboxAreasLastCount and #cachedAreasInSkybox == currCount then
+        return cachedAreasInSkybox, cachedAreasInSkyboxIndex, skyboxLastReturnReason
+
+    end
+
+    skyboxAreasLastCount = currCount
+
+    local queue = {}
+    local skyCameras = ents.FindByClass( "sky_camera" )
+    if #skyCameras <= 0 then
+        skyboxLastReturnReason = "no sky_cameras"
+        return cachedAreasInSkybox, cachedAreasInSkyboxIndex, skyboxLastReturnReason
+
+    end
+
+    for _, camera in ipairs( skyCameras ) do
+        local inSkyboxArea = navmesh.GetNearestNavArea( camera:GetPos(), nil, 2000, nil, nil )
+        if IsValid( inSkyboxArea ) then
+            table.insert( queue, inSkyboxArea )
+
+        end
+    end
+
+    if #queue <= 0 then
+        skyboxLastReturnReason = "couldn't find navareas in the skybox"
+        return cachedAreasInSkybox, cachedAreasInSkyboxIndex, skyboxLastReturnReason
+
+    end
+
+    local _, spawnpointAreas = NAVOPTIMIZER_tbl.AreasUnderCommonSpawnTypes()
+
+    local areasInSkybox = {}
+    local areasInSkyboxIndex = {}
+
+    local visited = {}
+
+    -- flood fill the skybox, find every connecting area
+    while #queue > 0 do
+        local currentNavArea = table.remove( queue, 1 )
+        if not IsValid( currentNavArea ) then continue end
+
+        if spawnpointAreas[ currentNavArea ] then -- sanity check
+            skyboxLastReturnReason = "navareas in the skybox somehow connect back to player spawnpoints, please fix this!"
+            return cachedAreasInSkybox, cachedAreasInSkyboxIndex, skyboxLastReturnReason
+
+        end
+
+        table.insert( areasInSkybox, currentNavArea )
+        areasInSkyboxIndex[ currentNavArea ] = true
+
+        for _, connectedNavArea in ipairs( currentNavArea:GetAdjacentAreas() ) do
+            if visited[connectedNavArea] then continue end
+
+            local connectedBothWays = connectedNavArea:IsConnected( currentNavArea ) and currentNavArea:IsConnected( connectedNavArea )
+            if not connectedBothWays then continue end
+
+            -- mark the connected navarea as visited
+            visited[connectedNavArea] = true -- mark as visited after we check connections, so it doesnt break
+            -- add the connected navarea to the queue to be processed
+            table.insert( queue, connectedNavArea )
+
+        end
+    end
+
+    cachedAreasInSkybox = areasInSkybox
+    cachedAreasInSkyboxIndex = areasInSkyboxIndex
+
+    return areasInSkybox, areasInSkyboxIndex, "all is well"
+
+end
+
+local notSkyboxAreasLastCount = -1
+local cachedAreasNotInSkybox = {}
+local cachedAreasNotInSkyboxIndex = {}
+
+function navareasNotInSkybox()
+    local currCount = navmesh.GetNavAreaCount()
+    if currCount == notSkyboxAreasLastCount then
+        return cachedAreasNotInSkybox, cachedAreasNotInSkyboxIndex
+
+    end
+    notSkyboxAreasLastCount = currCount
+
+    local areas = navmesh.GetAllNavAreas()
+    local _, areasInSkyboxIndex = navareasInSkybox()
+
+    local notInTheSkybox = {}
+    local notInTheSkyboxIndex = {}
+
+    for _, area in ipairs( areas ) do
+        if not areasInSkyboxIndex[ area ] then
+            table.insert( notInTheSkybox, area )
+            notInTheSkyboxIndex[ area ] = true
+
+        end
+    end
+
+    cachedAreasNotInSkybox = notInTheSkybox
+    cachedAreasNotInSkyboxIndex = notInTheSkyboxIndex
+
+    return notInTheSkybox, notInTheSkyboxIndex
+
+end
+
+
+local function navmeshDeleteSkyboxAreasCmd( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+
+    local areasInSkybox, _, returnReason = navareasInSkybox()
+    if #areasInSkybox <= 0 then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Something went wrong!\nReason: " .. returnReason )
+        return
+
+    end
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing " .. #areasInSkybox .. " navareas from this map's skybox" )
+    navmeshDeleteAllAreas( areasInSkybox, caller )
+
+end
 
 concommand.Add( "navmesh_trim_displacement_areas", navmeshStartDisplacementTrim, nil, "Removes small, 'redundant' areas on top of displacements", FCVAR_NONE )
 concommand.Add( "navmesh_trim_deepunderwater_areas", beginDeepWaterTrim, nil, "Removes areas under deep water. ( default >350 units deep )", FCVAR_NONE )
 
 concommand.Add( "navmesh_iscorrupt", corruptedCommand, nil, "Tells you if the navmesh is \"corrupt\", for example if the navmesh was generated on a different map that so happens to share names with the current one.", FCVAR_NONE )
 
-concommand.Add( "navmesh_delete_allareas", navmeshDeleteAllAreas, nil, "Removes ALL navareas.", FCVAR_NONE )
+concommand.Add( "navmesh_delete_allareas", navmeshDeleteAllAreasCmd, nil, "Removes ALL navareas.", FCVAR_NONE )
+concommand.Add( "navmesh_delete_skyboxareas", navmeshDeleteSkyboxAreasCmd, nil, "Removes navareas in the skybox, can be imperfect", FCVAR_NONE )

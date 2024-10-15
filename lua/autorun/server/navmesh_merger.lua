@@ -1,6 +1,7 @@
 
 
 NAVOPTIMIZER_tbl = NAVOPTIMIZER_tbl or {}
+NAVOPTIMIZER_tbl.isBusy = nil
 
 NAVOPTIMIZER_tbl.interestingEntityClasses = {
     "prop_physics",
@@ -1188,10 +1189,15 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     local smallGenerationStepCount = 0
 
     local dontGetAheadOfYourself = 1
-    local lastIncrementalGen = CurTime()
-    local lastIncrementalFinish = CurTime()
+    local lastIncrementalGen = SysTime()
+    local lastIncrementalFinish = SysTime()
 
     timer.Create( timerName, 0.020, 0, function()
+        local isGen = navmesh.IsGenerating()
+        if isGen then
+            lastIncrementalFinish = SysTime()
+
+        end
         local cur = CurTime()
         if blockTimerRun > cur then return end
         -- we are done!
@@ -1241,8 +1247,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         NAVOPTIMIZER_tbl.printCenterAlias( "SEED " .. seedProgress .. " / " .. realSeedsCount )
 
-        if navmesh.IsGenerating() then
-            lastIncrementalFinish = SysTime()
+        if isGen then
             blockTimerRun = cur + 1
             return
 
@@ -1353,11 +1358,23 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         -- if last gen took a while, we're probably navmeshing a big open map
         -- big batches on these maps can crash the game, so dont do that!
-        local tookAWhilePunishment = math.abs( lastIncrementalGen - lastIncrementalFinish )
-        tookAWhilePunishment = tookAWhilePunishment / 1000
+        local genTimeTaken = math.abs( lastIncrementalGen - lastIncrementalFinish )
+        local tookAWhilePunishment
+        if genTimeTaken > 30 then
+            dontGetAheadOfYourself = 1 -- took way too long, restart the batch steps
+            tookAWhilePunishment = genTimeTaken / 10
+
+        elseif genTimeTaken > 10 then
+            tookAWhilePunishment = genTimeTaken / 50
+
+        else
+            tookAWhilePunishment = genTimeTaken / 100
+
+        end
+
+        --print( genTimeTaken, tookAWhilePunishment )
 
         batchMax = batchMax - tookAWhilePunishment
-
         batchMax = math.Clamp( batchMax, 1, dontGetAheadOfYourself )
 
         local seedsNeededToBatch = math.Clamp( realSeedsCount / 150, 1, batchMax )

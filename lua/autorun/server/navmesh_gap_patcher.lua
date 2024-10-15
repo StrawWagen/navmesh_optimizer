@@ -16,8 +16,9 @@ local function getAreasToPatchBetween( pathwayPos, dirOffset )
     local area1 = NAVOPTIMIZER_tbl.getNearestNav( area1Pos, 1000 )
     local area2 = NAVOPTIMIZER_tbl.getNearestNav( area2Pos, 1000 )
 
-    if not ( area1 and area1.IsValid and area1:IsValid() ) or not ( area2 and area2.IsValid and area2:IsValid() ) then return end
+    if not IsValid( area1 ) or not IsValid( area2 ) then return end
     if area1 == area2 then return end
+    if not NAVOPTIMIZER_tbl.AreasHaveAnyOverlap( area1, area2 ) then return end
 
     local area1sCenter = area1:GetCenter()
     local area2sNearest = area2:GetClosestPointOnArea( area1sCenter )
@@ -128,6 +129,8 @@ local function patchBetweenAreas( pathwayPos, dirOffset )
     newArea:ConnectTo( area2 )
     area1:ConnectTo( newArea )
     area2:ConnectTo( newArea )
+
+    area1:Disconnect( area2 )
 
     local areasHull = Vector( newArea:GetSizeX() / 2, newArea:GetSizeY() / 2, 0.5 )
 

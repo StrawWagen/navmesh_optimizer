@@ -1,9 +1,40 @@
 
 local IsValid = IsValid
 
+local math_min = math.min
+local math_max = math.max
+
+NAVOPTIMIZER_tbl = NAVOPTIMIZER_tbl or {}
+
+function NAVOPTIMIZER_tbl.AreasHaveAnyOverlap( area1, area2 ) -- i love chatgpt functions
+    -- Get corners of both areas
+    local area1Corner1 = area1:GetCorner( 0 )
+    local area1Corner2 = area1:GetCorner( 2 )
+    local area2Corner1 = area2:GetCorner( 0 )
+    local area2Corner2 = area2:GetCorner( 2 )
+
+    -- Determine bounds of the areas
+    local area1MinX = math_min( area1Corner1.x, area1Corner2.x )
+    local area1MaxX = math_max( area1Corner1.x, area1Corner2.x )
+    local area1MinY = math_min( area1Corner1.y, area1Corner2.y )
+    local area1MaxY = math_max( area1Corner1.y, area1Corner2.y )
+
+    local area2MinX = math_min( area2Corner1.x, area2Corner2.x )
+    local area2MaxX = math_max( area2Corner1.x, area2Corner2.x )
+    local area2MinY = math_min( area2Corner1.y, area2Corner2.y )
+    local area2MaxY = math_max( area2Corner1.y, area2Corner2.y )
+
+    -- Check for overlap on X or Y axis
+    local xOverlap = ( area1MinX <= area2MaxX and area1MaxX >= area2MinX )
+    local yOverlap = ( area1MinY <= area2MaxY and area1MaxY >= area2MinY )
+
+    return xOverlap or yOverlap
+
+end
+
 -- find small areas that have connections on all 4 sides, that are on displacements
 local function handlePotentialDisplacementArea( area )
-    if not area or not area.IsValid or not area:IsValid() then return end
+    if not IsValid( area ) then return end
 
     if area:HasAttributes( NAV_MESH_CROUCH ) then return end
     if area:HasAttributes( NAV_MESH_STAIRS ) then return end
@@ -119,7 +150,7 @@ end
 
 
 local function handlePotentialDeepUnderwaterArea( area, depth )
-    if not area or not area.IsValid or not area:IsValid() then return end
+    if not IsValid( area ) then return end
 
     if not area:IsUnderwater() then return end
 
@@ -416,7 +447,7 @@ local function navareasInSkybox()
     end
 
     for _, camera in ipairs( skyCameras ) do
-        local inSkyboxArea = navmesh.GetNearestNavArea( camera:GetPos(), nil, 2000, nil, nil )
+        local inSkyboxArea = navmesh.GetNearestNavArea( camera:GetPos(), nil, 2000, true, nil )
         if IsValid( inSkyboxArea ) then
             table.insert( queue, inSkyboxArea )
 

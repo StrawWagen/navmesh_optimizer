@@ -51,7 +51,19 @@ end
 
 function NAVOPTIMIZER_tbl.getFloorTr( pos )
     local traceDat = {
-        mask = MASK_SOLID_BRUSHONLY,
+        mask = bit.bor( MASK_SOLID_BRUSHONLY, CONTENTS_MONSTERCLIP ),
+        start = pos + startOffset,
+        endpos = pos + bigNegativeZ
+    }
+
+    local trace = util.TraceLine( traceDat )
+    return trace
+
+end
+
+function NAVOPTIMIZER_tbl.getFloorTrSolid( pos )
+    local traceDat = {
+        mask = bit.bor( MASK_SOLID, CONTENTS_MONSTERCLIP ),
         start = pos + startOffset,
         endpos = pos + bigNegativeZ
     }
@@ -1476,6 +1488,8 @@ local function navMeshGlobalMergeAuto( caller )
 end
 
 local function navMeshGlobalMergeAutoNoAnalyze( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
     blockFinalAnalyze = true
     navMeshGlobalMergeAuto( caller )
     local msg = "Globalmerging... Not analyzing at the end."

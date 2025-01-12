@@ -250,43 +250,94 @@ local function beginDeepWaterTrim( caller, _, depthOverride )
 
 end
 
+local offset = Vector( 0, 0, 20 )
+local function posIsBroke( pos )
+    if not util.IsInWorld( pos ) then
+        return true
 
-local offset = Vector( 0, 0, 15 )
+    elseif NAVOPTIMIZER_tbl.getFloorTrSolid( pos ).HitPos:Distance( pos ) > 100 then
+        return true
 
-function navmeshIsCorrupted()
-    local allAreas = navmesh.GetAllNavAreas()
-    local areaCount = #allAreas
+    end
+end
+
+NAVOPTIMIZER_tbl.isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache or nil
+local corruptCacheCount = nil
+
+function getCorruptAreas( areas )
+    areas = areas or navmesh.GetAllNavAreas()
+
+    local isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache
+    local goodCache = isCorruptCache and corruptCacheCount and corruptCacheCount == navmesh.GetNavAreaCount()
+    if not goodCache then
+        corruptCacheCount = navmesh.GetNavAreaCount()
+        NAVOPTIMIZER_tbl.isCorruptCache = {}
+        isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache
+
+    end
+
+    local areaCount = #areas
     local corruptedAreas = {}
     local brokenCount = 0
     local normalCount = 0
 
-    for _, area in ipairs( allAreas ) do
-        local cornersToBeBroken = 2
-        if not util.IsInWorld( area:GetCenter() + offset ) then
-            cornersToBeBroken = 1
+    for _, area in ipairs( areas ) do
+        if area:HasAttributes( NAV_MESH_TRANSIENT ) then continue end
 
+        if isCorruptCache then
+            local cached = isCorruptCache[area]
+            if cached == true then
+                table.insert( corruptedAreas, area )
+                continue
+
+            elseif cached == false then
+                continue
+
+            end
         end
+
+        local smallArea = math.max( area:GetSizeX(), area:GetSizeY() ) < 35
+        local cornersToBeBroken = 2
+
         local brokenCorners = 0
-        for cornerId = 0, 3 do
-            local offsettedCorner = area:GetCorner( cornerId ) + offset
-            if not util.IsInWorld( offsettedCorner ) then
-                brokenCorners = brokenCorners + 1
+        if smallArea then
+            cornersToBeBroken = 1
+            if posIsBroke( area:GetCenter() + offset ) then
+                brokenCorners = brokenCorners + 2
 
-            elseif NAVOPTIMIZER_tbl.getFloorTr( offsettedCorner ).HitPos:Distance( offsettedCorner ) > 200 then
-                brokenCorners = brokenCorners + 1
+            end
+        else
+            if not util.IsInWorld( area:GetCenter() + offset ) then
+                cornersToBeBroken = 1
 
+            end
+            for cornerId = 0, 3 do
+                local offsettedCorner = area:GetCorner( cornerId ) + offset
+                if posIsBroke( offsettedCorner ) then
+                    brokenCorners = brokenCorners + 1
+
+                end
             end
         end
         if brokenCorners > cornersToBeBroken then
             brokenCount = brokenCount + 1
             table.insert( corruptedAreas, area )
+            isCorruptCache[area] = true
 
         else
             normalCount = normalCount + 1
+            isCorruptCache[area] = false
 
         end
 
     end
+
+    return corruptedAreas, brokenCount, areaCount
+
+end
+
+function navmeshIsCorrupted()
+    local corruptedAreas, brokenCount, areaCount = getCorruptAreas()
 
     local brokenRatio = brokenCount / areaCount
     local likelyCorrupt = brokenRatio > 0.15
@@ -411,11 +462,13 @@ local warned
 local function navmeshDeleteAllAreasCmd( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.isBusy then return end
-    local corrupt = navmeshIsCorrupted()
-    local worthWarning = not corrupt and IsValid( caller )
-    if worthWarning and not warned then -- start removing corrupt areas NOW!
+    if not warned then -- start removing corrupt areas NOW!
         warned = true
-        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again to proceed." )
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again now to proceed." )
+        timer.Simple( 5, function()
+            warned = nil
+
+        end )
         return
 
     end
@@ -551,6 +604,133 @@ local function navmeshDeleteSkyboxAreasCmd( caller )
 
 end
 
+local transparentWhite = Color( 255, 255, 255, 10 )
+local red = Color( 255, 0, 0 )
+local deleteHighlighOffset = Vector( 0, 0, 15 )
+
+local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+
+    local corruptAreas
+
+    local rad = tonumber( args[1] ) or 2000
+    if IsValid( caller ) and rad and rad >= 1 then
+        local center = caller:GetPos()
+        local maxs = Vector( rad, rad, rad ) * 2
+        local initialInRadius = navmesh.FindInBox( center + maxs, center + -maxs )
+
+        debugoverlay.Sphere( center, rad, 10, transparentWhite, true )
+
+        local inRadius = {}
+        local radSqr = rad^2
+        for _, area in ipairs( initialInRadius ) do
+            if area:GetCenter():DistToSqr( center ) < radSqr then
+                table.insert( inRadius, area )
+
+            end
+        end
+
+        corruptAreas = getCorruptAreas( inRadius )
+
+        if #corruptAreas <= 0 then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas in a radius of " .. rad .. " around the caller. 0 radius for mapwide." )
+            return
+
+        end
+
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing " .. #corruptAreas .. " corrupt navareas closer than " .. rad .. "u to the caller." )
+
+    else
+        corruptAreas = getCorruptAreas()
+
+        if #corruptAreas <= 0 then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas!" )
+            return
+
+        end
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing " .. #corruptAreas .. " corrupt navareas..." )
+    end
+
+    for _, area in ipairs( corruptAreas ) do
+        debugoverlay.Cross( area:GetCenter() + deleteHighlighOffset, 55, 60, red, true )
+
+    end
+    navmeshDeleteAllAreas( corruptAreas, caller )
+
+end
+
+local yellow = Color( 255, 255, 0 )
+
+local function navmeshHighlightCorruptAreasCmd( caller, _, args )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+
+    local toHighlight
+
+    local rad = tonumber( args[1] ) or 2000
+    if IsValid( caller ) and rad and rad >= 1 then
+        local center = caller:GetPos()
+        local maxs = Vector( rad, rad, rad ) * 2
+        local areasFound = navmesh.FindInBox( center + maxs, center + -maxs )
+
+        local corruptAreas = getCorruptAreas( areasFound )
+        toHighlight = {}
+
+        debugoverlay.Sphere( center, rad, 10, transparentWhite, true )
+
+        local radSqr = rad^2
+        for _, area in ipairs( corruptAreas ) do
+            if area:GetCenter():DistToSqr( center ) < radSqr then
+                table.insert( toHighlight, area )
+
+            end
+        end
+        if #toHighlight <= 0 then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas to highlight in a radius of " .. rad .. " around the caller. 0 radius for mapwide" )
+            return
+
+        else
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Highlighting clipped to radius of " .. rad .. "..." )
+
+        end
+
+    else
+        toHighlight = getCorruptAreas()
+
+        if #toHighlight <= 0 then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas to highlight." )
+            return
+
+        end
+    end
+
+    for _, area in ipairs( toHighlight ) do
+        debugoverlay.Cross( area:GetCenter(), 50, 60, yellow, true )
+
+    end
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Highlighted " .. #toHighlight .. " corrupt navareas with developer 1 visualizers..." )
+
+end
+local function navmeshTpToCorruptArea( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+    if not IsValid( caller ) then NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Need valid caller, spawn into the game!" ) return end
+
+    local corruptAreas, corruptCount = getCorruptAreas()
+    if #corruptAreas <= 0 then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas." )
+        return
+
+    end
+
+    local index = math.random( 1, #corruptAreas )
+
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleported " .. caller:GetName() .. " to corrupt area #" .. index .. " / " .. corruptCount )
+    caller:SetPos( corruptAreas[index]:GetCenter() )
+
+end
+
 concommand.Add( "navmesh_trim_displacement_areas", navmeshStartDisplacementTrim, nil, "Removes small, 'redundant' areas on top of displacements", FCVAR_NONE )
 concommand.Add( "navmesh_trim_deepunderwater_areas", beginDeepWaterTrim, nil, "Removes areas under deep water. ( default >350 units deep )", FCVAR_NONE )
 
@@ -558,3 +738,7 @@ concommand.Add( "navmesh_iscorrupt", corruptedCommand, nil, "Tells you if the na
 
 concommand.Add( "navmesh_delete_allareas", navmeshDeleteAllAreasCmd, nil, "Removes ALL navareas.", FCVAR_NONE )
 concommand.Add( "navmesh_delete_skyboxareas", navmeshDeleteSkyboxAreasCmd, nil, "Removes navareas in the skybox, can be imperfect", FCVAR_NONE )
+concommand.Add( "navmesh_delete_corruptareas", navmeshDeleteCorruptAreasInRadiusCmd, nil, "Removes \"corrupt\" navareas, closer than 'radius' to the caller. 0 radius for mapwide, default 2000.", FCVAR_NONE )
+
+concommand.Add( "navmesh_highlight_corruptareas", navmeshHighlightCorruptAreasCmd, nil, "Places \"developer 1\" crosses on \"corrupt\" navareas. 0 radius for mapwide, default 2000.", FCVAR_NONE )
+concommand.Add( "navmesh_teleportto_corruptarea", navmeshTpToCorruptArea, nil, "Teleports caller to a random corrupt area on the map", FCVAR_NONE )

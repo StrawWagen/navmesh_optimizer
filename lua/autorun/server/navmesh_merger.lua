@@ -39,6 +39,7 @@ table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, tpExits )
 local callerPersist = nil
 local bigNegativeZ = Vector( 0, 0, -3000 )
 local startOffset = Vector( 0, 0, 100 )
+local vec_up = Vector( 0, 0, 1 )
 local blockPrintCenter = CreateConVar( "navoptimizer_blockprintcenters", 0, { FCVAR_ARCHIVE } )
 local blockPrintConsole = CreateConVar( "navoptimizer_blockprintconsole", 0, { FCVAR_ARCHIVE } )
 
@@ -887,8 +888,6 @@ end )
 
 --]]
 
-local vec_up = Vector( 0, 0, 1 )
-
 local function getComprehensiveSeedPositions( justReturn )
     local seedsAdded = 0
     local donePositions = {}
@@ -1204,6 +1203,10 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     local lastIncrementalGen = SysTime()
     local lastIncrementalFinish = SysTime()
 
+    local collideSize = 8
+    local collideMins = Vector( -collideSize, -collideSize, 5 ) -- away from the origin a bit
+    local collideMaxs = Vector( collideSize, collideSize, 5 + ( collideSize * 2 ) )
+
     timer.Create( timerName, 0.020, 0, function()
         local isGen = navmesh.IsGenerating()
         if isGen then
@@ -1295,13 +1298,31 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
         if posHasContent( seedPos, CONTENTS_WINDOW ) then return end
         if posHasContent( seedPos, CONTENTS_MONSTERCLIP ) then return end
 
-        local seedPosUp25 = seedPos + vec_up * 25
+        local sizeMul = 1
+        if anyAreCloserThan( doneSeeds, seedPos, tooCloseXY * 4, tooCloseZ * 4 ) == true then -- catch hotspots of wasted generation time
+            sizeMul = 3
+
+        end
+
+        -- sanity check, very small trace
+        -- prevents tons of time waste on maps with weird/broken geometry
+        local collideCheckTr = {
+            start = seedPos,
+            endpos = seedPos + vec_up,
+            mask = MASK_SOLID_BRUSHONLY,
+            mins = collideMins * sizeMul,
+            maxs = collideMaxs * sizeMul,
+        }
+        local collideCheckResult = util.TraceHull( collideCheckTr )
+        if collideCheckResult.Hit or collideCheckResult.StartSolid then return end
 
         local under = IsUnderDisplacementExtensive( seedPos )
         if under then return end
 
         local downTr = NAVOPTIMIZER_tbl.getFloorTr( seedPos )
         if downTr.HitNormal.z < slopeLimitSeed then return end
+
+        local seedPosUp25 = seedPos + vec_up * 25
 
         local nearNav = navmesh.GetNearestNavArea( seedPosUp25, true, 50, true, true, -2 )
         if IsValid( nearNav ) then return end

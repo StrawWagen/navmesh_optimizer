@@ -347,9 +347,14 @@ function navmeshIsCorrupted()
 end
 
 local function corruptedCommand()
+    if navmesh.GetNavAreaCount() <= 0 then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "There is no navmesh..." )
+        return
+
+    end
     local corrupt, ratio = navmeshIsCorrupted()
     local ratioAsPercent = ratio * 100
-    ratioAsPercent = math.Round( ratioAsPercent )
+    ratioAsPercent = math.Round( ratioAsPercent, 2 )
 
     if corrupt then
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "CORRUPT!\n" .. ratioAsPercent .. "% of areas are either outside the world, or very high off the ground." )

@@ -300,7 +300,7 @@ function getCorruptAreas( areas )
         local cornersToBeBroken = 2
 
         local brokenCorners = 0
-        if smallArea then
+        if smallArea or area:IsBlocked() then
             cornersToBeBroken = 1
             if posIsBroke( area:GetCenter() + offset ) then
                 brokenCorners = brokenCorners + 2
@@ -369,7 +369,7 @@ local function corruptedCommand()
 end
 
 
-function navmeshDeleteAllAreas( areasOverride, dontRemoveLadders, caller )
+function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.isBusy then return end
 
@@ -477,7 +477,7 @@ local function navmeshDeleteAllAreasCmd( caller )
         return
 
     end
-    navmeshDeleteAllAreas( nil, caller )
+    navmeshDeleteAreas( nil, nil, caller )
 
 end
 
@@ -605,7 +605,7 @@ local function navmeshDeleteSkyboxAreasCmd( caller )
 
     end
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing " .. #areasInSkybox .. " navareas from this map's skybox" )
-    navmeshDeleteAllAreas( areasInSkybox, caller )
+    navmeshDeleteAreas( areasInSkybox, true, caller )
 
 end
 
@@ -661,7 +661,7 @@ local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
         debugoverlay.Cross( area:GetCenter() + deleteHighlighOffset, 55, 60, red, true )
 
     end
-    navmeshDeleteAllAreas( corruptAreas, caller )
+    navmeshDeleteAreas( corruptAreas, true, caller )
 
 end
 

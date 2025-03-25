@@ -1480,6 +1480,8 @@ local function navMeshGlobalMergeSingular( caller )
     local msg = "Singular globalmerging..."
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
     globalMergeRepeat = false
+    initialRepeatCount = 0
+    repeatMergedCount = 0
 
 end
 
@@ -1503,6 +1505,8 @@ local function navMeshGlobalMergeAuto( caller )
     end
     navMeshGlobalMerge( caller )
 
+    initialRepeatCount = 0
+    repeatMergedCount = 0
     globalMergeRepeat = true
     initialRepeatCount = #navmesh.GetAllNavAreas()
 
@@ -1582,7 +1586,7 @@ local function navMeshGlobalMergePrintResults()
     if not NAVOPTIMIZER_tbl.doingGlobalMerge and globalMergeResultTime > CurTime() then -- mt everest
         local CONGRATS = ""
         if doneMergedCount == 0 then
-            CONGRATS = "Your navmesh is optimized, Congraggulations"
+            CONGRATS = "Your navmesh is optimized, Congragggulations"
             if not congragulated then
                 for _, ply in ipairs( player.GetAll() ) do
                     ply:EmitSound( "garrysmod/save_load4.wav" )

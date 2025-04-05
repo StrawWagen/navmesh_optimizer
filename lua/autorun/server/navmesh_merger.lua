@@ -187,39 +187,59 @@ function NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( area )
 
 end
 
-function NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-    if not IsValid( callerPersist ) then
-        print( msg )
 
-    elseif not blockPrintConsole:GetBool() then
-        PrintMessage( HUD_PRINTCONSOLE, msg )
+do
+    local doneThisTick = 0
+
+    local function doThisTick()
+        if doneThisTick == 1 then
+            timer.Simple( 0, function()
+                doneThisTick = 0
+
+            end )
+        end
+        doneThisTick = doneThisTick + 1
 
     end
-end
 
-local function printCenterTimed( msg, time )
-    local timerName = "NAVOPTIMIZER_PRINTCENTER"
-    if blockPrintCenter:GetBool() then return end
-    timer.Remove( timerName )
-    timer.Create( timerName, 1, time, function()
-        if IsValid( callerPersist ) then
-            callerPersist:PrintMessage( HUD_PRINTCENTER, msg )
+    function NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
+        if not IsValid( callerPersist ) then
+            print( msg )
+
+        elseif not blockPrintConsole:GetBool() then
+            PrintMessage( HUD_PRINTCONSOLE, msg )
+
+        end
+    end
+
+    function NAVOPTIMIZER_tbl.printCenterTimed( msg, time )
+        local timerName = "NAVOPTIMIZER_PRINTCENTER"
+        if blockPrintCenter:GetBool() then return end
+        doThisTick()
+        if doneThisTick > 5 then return end -- dont overflow
+        timer.Remove( timerName )
+        timer.Create( timerName, 1, time, function()
+            if IsValid( callerPersist ) then
+                callerPersist:PrintMessage( HUD_PRINTCENTER, msg )
+
+            else
+                PrintMessage( HUD_PRINTCENTER, msg )
+
+            end
+        end )
+    end
+
+    function NAVOPTIMIZER_tbl.printCenterAlias( msg, toPrint )
+        if blockPrintCenter:GetBool() then return end
+        doThisTick()
+        if doneThisTick > 5 then return end -- dont overflow
+        if IsValid( toPrint ) then
+            toPrint:PrintMessage( HUD_PRINTCENTER, msg )
 
         else
             PrintMessage( HUD_PRINTCENTER, msg )
 
         end
-    end )
-end
-
-function NAVOPTIMIZER_tbl.printCenterAlias( msg, toPrint )
-    if blockPrintCenter:GetBool() then return end
-    if IsValid( toPrint ) then
-        toPrint:PrintMessage( HUD_PRINTCENTER, msg )
-
-    else
-        PrintMessage( HUD_PRINTCENTER, msg )
-
     end
 end
 
@@ -1241,7 +1261,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
                 end
             end
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msgDone )
-            printCenterTimed( msgDone, 30 )
+            NAVOPTIMIZER_tbl.printCenterTimed( msgDone, 30 )
             if IsValid( callerPersist ) then
 
                 -- fix the command after!

@@ -149,15 +149,17 @@ local function navmeshStartDisplacementTrim( caller )
 end
 
 
+local removedAreaSlowDown = 0
+
 local function handlePotentialDeepUnderwaterArea( area, depth )
     if not IsValid( area ) then return end
 
     if not area:IsUnderwater() then return end
 
-    local offsetVec = Vector( 0, 0, 0 )
-    local pos = area:GetCenter()
+    local offsetVec = Vector( 0, 0, depth )
+    local idealPos = area:GetCenter() + offsetVec
+    local pos = area:GetClosestPointOnArea( idealPos )
     local wasDry
-    -- 350 depth
     for ind = 1, depth do
         offsetVec.z = ind
         if bit.band( util.PointContents( pos + offsetVec ), CONTENTS_WATER ) <= 0 then
@@ -170,6 +172,7 @@ local function handlePotentialDeepUnderwaterArea( area, depth )
     if wasDry then return end
 
     area:Remove()
+    removedAreaSlowDown = 10
 
     return true
 
@@ -206,7 +209,13 @@ local function thinkHookDeepWaterTrim()
 
     elseif navmeshRemoveAreasDeepUnderwaterCor then -- run
         local oldTime = SysTime()
-        while math.abs( oldTime - SysTime() ) < 0.0005 do
+        local check = 0.005
+        if removedAreaSlowDown > 0 then -- strange lag from outside coroutine when area is removed
+            check = 0.0001
+            removedAreaSlowDown = removedAreaSlowDown + -1
+
+        end
+        while math.abs( oldTime - SysTime() ) < check do
             local noErrors, result = coroutine.resume( navmeshRemoveAreasDeepUnderwaterCor )
             if noErrors == false then
                 ErrorNoHaltWithStack( result )

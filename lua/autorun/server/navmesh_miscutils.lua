@@ -1,4 +1,10 @@
 
+local navMeta = FindMetaTable( "CNavArea" )
+local HasAttributes = navMeta.HasAttributes
+local GetCenter = navMeta.GetCenter
+local GetSizeX = navMeta.GetSizeX
+local GetSizeY = navMeta.GetSizeY
+
 local IsValid = IsValid
 
 local math_min = math.min
@@ -8,10 +14,10 @@ NAVOPTIMIZER_tbl = NAVOPTIMIZER_tbl or {}
 
 function NAVOPTIMIZER_tbl.AreasHaveAnyOverlap( area1, area2 ) -- i love chatgpt functions
     -- Get corners of both areas
-    local area1Corner1 = area1:GetCorner( 0 )
-    local area1Corner2 = area1:GetCorner( 2 )
-    local area2Corner1 = area2:GetCorner( 0 )
-    local area2Corner2 = area2:GetCorner( 2 )
+    local area1Corner1 = navMeta.GetCorner( area1, 0 )
+    local area1Corner2 = navMeta.GetCorner( area1, 2 )
+    local area2Corner1 = navMeta.GetCorner( area1, 0 )
+    local area2Corner2 = navMeta.GetCorner( area1, 2 )
 
     -- Determine bounds of the areas
     local area1MinX = math_min( area1Corner1.x, area1Corner2.x )
@@ -36,11 +42,11 @@ end
 local function handlePotentialDisplacementArea( area )
     if not IsValid( area ) then return end
 
-    if area:HasAttributes( NAV_MESH_CROUCH ) then return end
-    if area:HasAttributes( NAV_MESH_STAIRS ) then return end
-    if area:HasAttributes( NAV_MESH_NO_MERGE ) then return end
-    if area:HasAttributes( NAV_MESH_TRANSIENT ) then return end
-    if area:HasAttributes( NAV_MESH_OBSTACLE_TOP ) then return end
+    if HasAttributes( area, NAV_MESH_CROUCH ) then return end
+    if HasAttributes( area, NAV_MESH_STAIRS ) then return end
+    if HasAttributes( area, NAV_MESH_NO_MERGE ) then return end
+    if HasAttributes( area, NAV_MESH_TRANSIENT ) then return end
+    if HasAttributes( area, NAV_MESH_OBSTACLE_TOP ) then return end
 
     local perfectlyFlat = true
     local lastZ
@@ -54,23 +60,23 @@ local function handlePotentialDisplacementArea( area )
     -- even if it is on a displacement, perfectly flat displacements arent gonna make small areas
     if perfectlyFlat then return end
 
-    local biggestLength = math.max( area:GetSizeX(), area:GetSizeY() )
+    local biggestLength = math.max( GetSizeX( area ), GetSizeY( area ) )
 
     local bigLength = 55
     -- be more aggressive if area is a trash underwater one
-    if area:IsUnderwater() then
+    if navMeta.IsUnderwater( area ) then
         bigLength = 140
 
     end
 
     if biggestLength > bigLength then return end
 
-    local adjAreas = area:GetAdjacentAreas()
+    local adjAreas = navMeta.GetAdjacentAreas( area )
     if #adjAreas <= 3 then return end
 
     if not NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( area ) then return end
 
-    area:Remove()
+    navMeta.Remove( area )
 
     return true
 
@@ -154,11 +160,11 @@ local removedAreaSlowDown = 0
 local function handlePotentialDeepUnderwaterArea( area, depth )
     if not IsValid( area ) then return end
 
-    if not area:IsUnderwater() then return end
+    if not navMeta.IsUnderwater( area ) then return end
 
     local offsetVec = Vector( 0, 0, depth )
-    local idealPos = area:GetCenter() + offsetVec
-    local pos = area:GetClosestPointOnArea( idealPos )
+    local idealPos = GetCenter( area ) + offsetVec
+    local pos = navMeta.areaGetClosestPointOnArea( area, idealPos )
     local wasDry
     for ind = 1, depth do
         offsetVec.z = ind
@@ -171,7 +177,7 @@ local function handlePotentialDeepUnderwaterArea( area, depth )
 
     if wasDry then return end
 
-    area:Remove()
+    navMeta.Remove( area )
     removedAreaSlowDown = 10
 
     return true
@@ -270,58 +276,90 @@ local function posIsBroke( pos )
     end
 end
 
+function getBlockedAreas( areas )
+    areas = areas or navmesh.GetAllNavAreas()
+
+    local areaCount = #areas
+
+    local blockedAreas = {}
+    local blockedCount = 0
+    local normalCount = 0
+
+    for _, area in ipairs( areas ) do
+        if navMeta.IsBlocked( area ) then
+            blockedCount = blockedCount + 1
+            table.insert( blockedAreas, area )
+
+        else
+            normalCount = normalCount + 1
+
+        end
+    end
+
+    return blockedAreas, blockedCount, areaCount
+
+end
+
 NAVOPTIMIZER_tbl.isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache or nil
 local corruptCacheCount = nil
 
 function getCorruptAreas( areas )
     areas = areas or navmesh.GetAllNavAreas()
 
+    local allAreaCount = navmesh.GetNavAreaCount()
+
     local isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache
-    local goodCache = isCorruptCache and corruptCacheCount and corruptCacheCount == navmesh.GetNavAreaCount()
+    local goodCache = isCorruptCache and corruptCacheCount and corruptCacheCount == allAreaCount
     if not goodCache then
+        if not corruptCacheCount or allAreaCount > corruptCacheCount then -- only rebuild if areas were added, or we never built, can break with nav_compress_id prob, but whatever
+            NAVOPTIMIZER_tbl.isCorruptCache = {}
+            isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache
+
+        end
         corruptCacheCount = navmesh.GetNavAreaCount()
-        NAVOPTIMIZER_tbl.isCorruptCache = {}
-        isCorruptCache = NAVOPTIMIZER_tbl.isCorruptCache
 
     end
 
     local areaCount = #areas
+
     local corruptedAreas = {}
     local brokenCount = 0
     local normalCount = 0
 
     for _, area in ipairs( areas ) do
-        if area:HasAttributes( NAV_MESH_TRANSIENT ) then continue end
+        if HasAttributes( area, NAV_MESH_TRANSIENT ) then continue end
 
         if isCorruptCache then
             local cached = isCorruptCache[area]
             if cached == true then
+                brokenCount = brokenCount + 1
                 table.insert( corruptedAreas, area )
                 continue
 
             elseif cached == false then
+                normalCount = normalCount + 1
                 continue
 
             end
         end
 
-        local smallArea = math.max( area:GetSizeX(), area:GetSizeY() ) < 35
+        local smallArea = math.max( GetSizeX( area ), GetSizeY( area ) ) < 35
         local cornersToBeBroken = 2
 
         local brokenCorners = 0
-        if smallArea or area:IsBlocked() then
+        if smallArea or navMeta.IsBlocked( area ) then
             cornersToBeBroken = 1
-            if posIsBroke( area:GetCenter() + offset ) then
+            if posIsBroke( GetCenter( area ) + offset ) then
                 brokenCorners = brokenCorners + 2
 
             end
         else
-            if not util.IsInWorld( area:GetCenter() + offset ) then
+            if not util.IsInWorld( GetCenter( area ) + offset ) then
                 cornersToBeBroken = 1
 
             end
             for cornerId = 0, 3 do
-                local offsettedCorner = area:GetCorner( cornerId ) + offset
+                local offsettedCorner = navMeta.GetCorner( area, cornerId ) + offset
                 if posIsBroke( offsettedCorner ) then
                     brokenCorners = brokenCorners + 1
 
@@ -419,7 +457,7 @@ function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
                     local area = areas[id]
 
                     if IsValid( area ) then
-                        area:Remove()
+                        navMeta.Remove( area )
                         removedAreas = removedAreas + 1
                         blockRemoved = blockRemoved + 1
 
@@ -431,7 +469,7 @@ function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
         timer.Simple( ( blocks * timeMul ) + timeMul, function()
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Finishing up..." )
             for _, area in ipairs( navmesh.GetAllNavAreas() ) do
-                area:Remove()
+                navMeta.Remove( area )
                 removedAreas = removedAreas + 1
 
             end
@@ -548,10 +586,10 @@ local function navareasInSkybox()
         table.insert( areasInSkybox, currentNavArea )
         areasInSkyboxIndex[ currentNavArea ] = true
 
-        for _, connectedNavArea in ipairs( currentNavArea:GetAdjacentAreas() ) do
+        for _, connectedNavArea in ipairs( navMeta.GetAdjacentAreas( currentNavArea ) ) do
             if visited[connectedNavArea] then continue end
 
-            local connectedBothWays = connectedNavArea:IsConnected( currentNavArea ) and currentNavArea:IsConnected( connectedNavArea )
+            local connectedBothWays = navMeta.IsConnected( connectedNavArea, currentNavArea ) and navMeta.IsConnected( currentNavArea, connectedNavArea )
             if not connectedBothWays then continue end
 
             -- mark the connected navarea as visited
@@ -639,7 +677,7 @@ local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
         local inRadius = {}
         local radSqr = rad^2
         for _, area in ipairs( initialInRadius ) do
-            if area:GetCenter():DistToSqr( center ) < radSqr then
+            if GetCenter( area ):DistToSqr( center ) < radSqr then
                 table.insert( inRadius, area )
 
             end
@@ -667,7 +705,7 @@ local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
     end
 
     for _, area in ipairs( corruptAreas ) do
-        debugoverlay.Cross( area:GetCenter() + deleteHighlighOffset, 55, 60, red, true )
+        debugoverlay.Cross( GetCenter( area ) + deleteHighlighOffset, 55, 60, red, true )
 
     end
     navmeshDeleteAreas( corruptAreas, true, caller )
@@ -695,7 +733,7 @@ local function navmeshHighlightCorruptAreasCmd( caller, _, args )
 
         local radSqr = rad^2
         for _, area in ipairs( corruptAreas ) do
-            if area:GetCenter():DistToSqr( center ) < radSqr then
+            if GetCenter( area ):DistToSqr( center ) < radSqr then
                 table.insert( toHighlight, area )
 
             end
@@ -720,29 +758,66 @@ local function navmeshHighlightCorruptAreasCmd( caller, _, args )
     end
 
     for _, area in ipairs( toHighlight ) do
-        debugoverlay.Cross( area:GetCenter(), 50, 60, yellow, true )
+        debugoverlay.Cross( GetCenter( area ), 50, 60, yellow, true )
 
     end
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Highlighted " .. #toHighlight .. " corrupt navareas with developer 1 visualizers..." )
 
 end
+
+local teleportDelay = 0.01
+
 local function navmeshTpToCorruptArea( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.isBusy then return end
     if not IsValid( caller ) then NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Need valid caller, spawn into the game!" ) return end
 
-    local corruptAreas, corruptCount = getCorruptAreas()
-    if #corruptAreas <= 0 then
-        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas." )
-        return
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleporting..." )
 
-    end
+    timer.Simple( teleportDelay, function()
+        if not IsValid( caller ) then return end
+        local corruptAreas, corruptCount = getCorruptAreas()
+        if #corruptAreas <= 0 then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas." )
+            return
 
-    local index = math.random( 1, #corruptAreas )
+        end
 
-    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleported " .. caller:GetName() .. " to corrupt area #" .. index .. " / " .. corruptCount )
-    caller:SetPos( corruptAreas[index]:GetCenter() )
+        local index = math.random( 1, #corruptAreas )
 
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleported " .. caller:GetName() .. " to corrupt area #" .. index .. " / " .. corruptCount )
+        local areasCenter = GetCenter( corruptAreas[index] )
+        caller:SetPos( areasCenter )
+        debugoverlay.Cross( areasCenter, 50, 60, yellow, true )
+
+    end )
+end
+
+local function navmeshTpToBlockedArea( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+    if not IsValid( caller ) then NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Need valid caller, spawn into the game!" ) return end
+
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleporting..." )
+
+    timer.Simple( teleportDelay, function()
+        if not IsValid( caller ) then return end
+        local blockedAreas, blockedCount = getBlockedAreas()
+        if #blockedAreas <= 0 then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No blocked areas." )
+            return
+
+        end
+
+        local index = math.random( 1, #blockedAreas )
+
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleported " .. caller:GetName() .. " to blocked area #" .. index .. " / " .. blockedCount )
+
+        local areasCenter = GetCenter( blockedAreas[index] )
+        caller:SetPos( areasCenter )
+        debugoverlay.Cross( areasCenter, 50, 60, yellow, true )
+
+    end )
 end
 
 concommand.Add( "navmesh_trim_displacement_areas", navmeshStartDisplacementTrim, nil, "Removes small, 'redundant' areas on top of displacements", FCVAR_NONE )
@@ -756,3 +831,5 @@ concommand.Add( "navmesh_delete_corruptareas", navmeshDeleteCorruptAreasInRadius
 
 concommand.Add( "navmesh_highlight_corruptareas", navmeshHighlightCorruptAreasCmd, nil, "Places \"developer 1\" crosses on \"corrupt\" navareas. 0 radius for mapwide, default 2000.", FCVAR_NONE )
 concommand.Add( "navmesh_teleportto_corruptarea", navmeshTpToCorruptArea, nil, "Teleports caller to a random corrupt area on the map", FCVAR_NONE )
+
+concommand.Add( "navmesh_teleportto_blockedarea", navmeshTpToBlockedArea, nil, "Teleports caller to a random blocked area on the map", FCVAR_NONE )

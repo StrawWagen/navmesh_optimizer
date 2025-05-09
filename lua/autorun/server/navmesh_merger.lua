@@ -1152,7 +1152,7 @@ local timerName = "navoptimizer_true_incremental_generation"
 
 local CurTime = CurTime
 
-function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
+function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds, radiusClamp )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
 
     if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
@@ -1458,8 +1458,8 @@ local function navGenerateCheapExpanded( caller )
 
 end
 
-local function navGenerateCheapPlyseeds( caller )
-    superIncrementalGeneration( caller, false, true )
+local function navGenerateCheapPlyseeds( caller, _cmdString, args )
+    superIncrementalGeneration( caller, false, true, args[1] )
 
 end
 
@@ -1782,7 +1782,7 @@ concommand.Add( "navmesh_mark_walkble_allplayers", function() navAddSeedsUnderPl
 concommand.Add( "nav_generate_cheap_expanded", navGenerateCheapExpanded, nil, "Incrementally generates a navmesh, dynamically places seed locations in walkable areas across the map. Navareas will cover the entire map, skybox, rooftops, inacessible areas, basically a 'nuclear option'.", FCVAR_NONE )
 concommand.Add( "navmesh_generate_cheap_expanded", navGenerateCheapExpanded, nil, "Clone of nav_generate_cheap_expanded.", FCVAR_NONE )
 
-concommand.Add( "nav_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_expanded. Inital seeds are only placed under players.", FCVAR_NONE )
+concommand.Add( "nav_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_expanded. Inital seeds are only placed under players, first arg is seed clamp radius, seeds won't be placed further than it from any player.", FCVAR_NONE )
 concommand.Add( "navmesh_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_plyseeds.", FCVAR_NONE )
 
 

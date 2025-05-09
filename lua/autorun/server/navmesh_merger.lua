@@ -1727,7 +1727,7 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
                             else
                                 RunConsoleCommand( "nav_max_view_distance", tostring( expensiveVisDist ) )
                             end
-                            RunConsoleCommand( "nav_edit 1" )
+                            RunConsoleCommand( "nav_edit", "1" )
                             RunConsoleCommand( "nav_analyze" )
                             timer.Simple( 1, function()
                                 NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )

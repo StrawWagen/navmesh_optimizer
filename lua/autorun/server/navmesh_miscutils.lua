@@ -430,7 +430,8 @@ function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
         end
         timer.Simple( ( blocks * timeMul ) + timeMul, function()
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Finishing up..." )
-            for _, area in ipairs( navmesh.GetAllNavAreas() ) do
+            for _, area in ipairs( areas ) do
+                if not IsValid( area ) then continue end
                 area:Remove()
                 removedAreas = removedAreas + 1
 

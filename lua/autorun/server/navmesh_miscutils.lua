@@ -377,8 +377,7 @@ local function corruptedCommand()
     end
 end
 
-
-function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
+function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller, hookOnDone )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.isBusy then return end
 
@@ -396,6 +395,7 @@ function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
     -- if less than 10k areas
     if areaCount < blockSize * 20 then
         for _, area in ipairs( areas ) do
+            if not IsValid( area ) then continue end
             area:Remove()
             removedAreas = removedAreas + 1
 
@@ -465,7 +465,8 @@ function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller )
 
         end
 
-        hook.Run( "navoptimizer_done_removingallareas" )
+        hook.Run( hookOnDone )
+        hook.Run( "navoptimizer_done_removingareas" )
         NAVOPTIMIZER_tbl.isBusy = false
         NAVOPTIMIZER_tbl.nag( callerPersist )
 
@@ -480,14 +481,14 @@ local function navmeshDeleteAllAreasCmd( caller )
     if not warned then -- start removing corrupt areas NOW!
         warned = true
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again now to proceed." )
-        timer.Simple( 5, function()
+        timer.Simple( 10, function()
             warned = nil
 
         end )
         return
 
     end
-    navmeshDeleteAreas( nil, nil, caller )
+    navmeshDeleteAreas( nil, nil, caller, "navoptimizer_done_removingallareas" )
 
 end
 
@@ -611,11 +612,12 @@ local function navmeshDeleteSkyboxAreasCmd( caller )
     local areasInSkybox, _, returnReason = navareasInSkybox()
     if #areasInSkybox <= 0 then
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Something went wrong!\nReason: " .. returnReason )
+        hook.Run( "navoptimizer_done_removingskyboxareas" )
         return
 
     end
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Removing " .. #areasInSkybox .. " navareas from this map's skybox" )
-    navmeshDeleteAreas( areasInSkybox, true, caller )
+    navmeshDeleteAreas( areasInSkybox, true, caller, "navoptimizer_done_removingskyboxareas" )
 
 end
 
@@ -650,6 +652,7 @@ local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
 
         if #corruptAreas <= 0 then
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas in a radius of " .. rad .. " around the caller. 0 radius for mapwide." )
+            hook.Run( "navoptimizer_done_removingcorruptareas" )
             return
 
         end
@@ -661,6 +664,7 @@ local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
 
         if #corruptAreas <= 0 then
             NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No corrupt areas!" )
+            hook.Run( "navoptimizer_done_removingcorruptareas" )
             return
 
         end
@@ -671,7 +675,7 @@ local function navmeshDeleteCorruptAreasInRadiusCmd( caller, _, args )
         debugoverlay.Cross( area:GetCenter() + deleteHighlighOffset, 55, 60, red, true )
 
     end
-    navmeshDeleteAreas( corruptAreas, true, caller )
+    navmeshDeleteAreas( corruptAreas, true, caller, "navoptimizer_done_removingcorruptareas" )
 
 end
 

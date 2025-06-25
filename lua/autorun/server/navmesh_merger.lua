@@ -1707,6 +1707,11 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
                 doMessageThink = true
                 if not blockFinalAnalyze then
                     analyzing = true
+                    timer.Simple( 0, function()
+                        local msg = "Analyzing navmesh in 15s..."
+                        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
+
+                    end )
                     timer.Simple( 15, function()
                         if IsValid( callerPersist ) then
                             --don't ask people to do vis calculations on maps that didn't have them in the first place!

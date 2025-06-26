@@ -1606,7 +1606,7 @@ local function navMeshGlobalMergePrintResults()
     if not NAVOPTIMIZER_tbl.doingGlobalMerge and globalMergeResultTime > CurTime() then -- mt everest
         local CONGRATS = ""
         if doneMergedCount == 0 then
-            CONGRATS = "Your navmesh is optimized, Congragggulations"
+            CONGRATS = "Your navmesh is optimized, Gratz!"
             if not congragulated then
                 for _, ply in ipairs( player.GetAll() ) do
                     ply:EmitSound( "garrysmod/save_load4.wav" )

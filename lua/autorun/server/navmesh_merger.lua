@@ -4,7 +4,6 @@ NAVOPTIMIZER_tbl = NAVOPTIMIZER_tbl or {}
 NAVOPTIMIZER_tbl.isBusy = nil
 
 NAVOPTIMIZER_tbl.interestingEntityClasses = {
-    "prop_physics",
     "info_ladder_dismount",
     "prop_door_rotating",
     "func_button",
@@ -37,6 +36,7 @@ table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, NAVOPTIMIZER_tbl.commonSpa
 table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, tpExits )
 
 local callerPersist = nil
+
 local bigNegativeZ = Vector( 0, 0, -3000 )
 local startOffset = Vector( 0, 0, 100 )
 local vec_up = Vector( 0, 0, 1 )
@@ -866,6 +866,7 @@ function navmeshAutoAttemptMerge( navArea )
 
 end
 
+
 local forceExpensiveMerge = false
 local generateCheapNavmesh = false
 
@@ -952,14 +953,6 @@ local function getComprehensiveSeedPositions( justReturn )
                 checkDist = 250
                 zTolerance = 10
 
-            elseif seedClass == "prop_physics" then
-                seedEntPos = seedEnt:WorldSpaceCenter()
-                local valid, floorPos = snappedToFloor( seedEntPos )
-                if not valid then continue end
-                seedEntPos = floorPos
-                checkDist = 300
-                zTolerance = 50
-
             end
 
             if anyAreCloserThan( donePositions, seedEntPos, checkDist, zTolerance ) == true then continue end
@@ -1036,6 +1029,63 @@ local function navAddSeedsUnderPlayers( justReturn )
 
     return extraSeeds
 
+end
+
+
+local function makeGenerationCheap()
+    RunConsoleCommand( "nav_max_view_distance", "1" )
+
+end
+
+function navGenerateCheap( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if navmesh.IsGenerating() then NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Navmesh is already generating!" ) return end
+    if NAVOPTIMIZER_tbl.isBusy then NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Busy!" ) return end
+
+    callerPersist = caller
+
+    NAVOPTIMIZER_tbl.isBusy = true
+    NAVOPTIMIZER_tbl.enableNavEdit( caller )
+
+    local step = 0
+    local timerName = "navoptimizer_generatecheap"
+
+    local function stop()
+        NAVOPTIMIZER_tbl.disableNavEdit( caller )
+        timer.Remove( timerName )
+        NAVOPTIMIZER_tbl.isBusy = false
+
+
+    end
+
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Generating cheap navmesh..." )
+    makeGenerationCheap()
+
+    timer.Create( timerName, 0.25, 0, function()
+        if step == 0 then
+            step = step + 1
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Placing seeds..." )
+            getComprehensiveSeedPositions()
+            if game.IsDedicated() and player.GetCount() >= 1 then
+                navAddSeedsUnderPlayers()
+
+            end
+        elseif step == 1 then
+            step = step + 1
+            if IsValid( caller ) then
+                caller:ConCommand( "nav_generate" )
+
+            else
+                RunConsoleCommand( "nav_generate" )
+
+            end
+        elseif not navmesh.IsGenerating() then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Cheap navmesh generated!" )
+            stop()
+            hook.Run( "navoptimizer_done_gencheap" )
+
+        end
+    end )
 end
 
 local function navAddEasyNavmeshSeeds()
@@ -1141,7 +1191,7 @@ local function doIncrementalCheapGeneration( batchSeedsPlaced, seedProgress, rea
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msgGenerationProgress )
 
     timer.Simple( 0.05, function()
-        RunConsoleCommand( "nav_max_view_distance", "1" )
+        makeGenerationCheap()
         RunConsoleCommand( "nav_generate_incremental_range", tostring( incrementalRange ) )
         RunConsoleCommand( "nav_generate_incremental" )
 
@@ -1782,8 +1832,12 @@ concommand.Add( "navmesh_mark_walkble_auto", navAddEasyNavmeshSeeds, nil, "Uses 
 concommand.Add( "nav_mark_walkble_allplayers", function() navAddSeedsUnderPlayers() end, nil, "Clone of navmesh_mark_walkble_allplayers. Places a navmesh seed under every player. For doing custom navmesh seeds on dedicated servers.", FCVAR_NONE )
 concommand.Add( "navmesh_mark_walkble_allplayers", function() navAddSeedsUnderPlayers() end, nil, "Places a navmesh seed under every player. For doing custom navmesh seeds on dedicated servers.", FCVAR_NONE )
 
--- same but it generates at 1 visibilty distance, 10mb nav filesize vs 300mb....
--- wow the nav_analyze at the end doesn't restart the session!!?!?!
+-- same as nav_generate but it generates at 1 visibilty distance, 10mb nav filesize vs 300mb....
+-- this command is kind of stupid, its just 1 command with other commands inside it
+concommand.Add( "nav_generate_cheap", navGenerateCheap, nil, "Generates a navmesh. Just nav_generate but it runs some extra commands.", FCVAR_NONE )
+concommand.Add( "navmesh_generate_cheap", navGenerateCheap, nil, "Clone of nav_generate_cheap.", FCVAR_NONE )
+
+-- wow the nav_analyze at the end of each batch doesn't restart the session!!?!?!
 concommand.Add( "nav_generate_cheap_expanded", navGenerateCheapExpanded, nil, "Incrementally generates a navmesh, dynamically places seed locations in walkable areas across the map. Navareas will cover the entire map, skybox, rooftops, inacessible areas, basically a 'nuclear option'.", FCVAR_NONE )
 concommand.Add( "navmesh_generate_cheap_expanded", navGenerateCheapExpanded, nil, "Clone of nav_generate_cheap_expanded.", FCVAR_NONE )
 

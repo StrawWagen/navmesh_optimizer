@@ -38,7 +38,7 @@ table.Add( NAVOPTIMIZER_tbl.interestingEntityClasses, tpExits )
 local callerPersist = nil
 
 local bigNegativeZ = Vector( 0, 0, -3000 )
-local startOffset = Vector( 0, 0, 100 )
+local startOffset = Vector( 0, 0, 25 )
 local vec_up = Vector( 0, 0, 1 )
 local blockPrintCenter = CreateConVar( "navoptimizer_blockprintcenters", 0, { FCVAR_ARCHIVE } )
 local blockPrintConsole = CreateConVar( "navoptimizer_blockprintconsole", 0, { FCVAR_ARCHIVE } )
@@ -521,6 +521,102 @@ local function navAreaGetCloseCorners( pos, areaToCheck )
 
 end
 
+local cornersBuds = {
+    [0] = 1, -- NW, NE
+    [1] = 2, -- NE, SE
+    [2] = 3, -- SE, SW
+    [3] = 0, -- SW, NW
+}
+
+local stairCheckUp = Vector( 0, 0, 8 ) -- stick close to the ground when checking if stairs are coplanar
+local otherwiseCheckUp = Vector( 0, 0, 12 ) -- otherwise be lenient
+
+local function offsetForThisArea( area, pos )
+    if area:HasAttributes( NAV_MESH_STAIRS ) then
+        return pos + stairCheckUp
+
+    else
+        return pos + otherwiseCheckUp
+
+    end
+end
+
+-- see if all the points on this area can see the other area's points
+-- if they can, merging these two areas won't make the area go through the world
+function AreRoughlyCoplanar( area1, area2 )
+    local trResult = {}
+    local trStruc = {
+        mask = MASK_NPCSOLID,
+        output = trResult,
+    }
+
+    local center1 = area1:GetCenter()
+    local center2 = area2:GetCenter()
+    center1 = center1 + otherwiseCheckUp
+    center2 = center2 + otherwiseCheckUp
+
+    trStruc.start = center1
+    trStruc.endpos = center2
+    util.TraceLine( trStruc )
+
+    if trResult.Hit then
+        --debugoverlay.Line( trStruc.start, trResult.HitPos, 5, Color( 255, 0, 0 ), true )
+        return false
+
+    end
+
+    local area1sClosestTo2 = area1:GetClosestPointOnArea( center2 )
+    local area2sClosestTo1 = area2:GetClosestPointOnArea( center1 )
+    area1sClosestTo2 = area1sClosestTo2 + otherwiseCheckUp
+    area2sClosestTo1 = area2sClosestTo1 + otherwiseCheckUp
+
+    local _, deepPos1 = util.DistanceToLine( center1, center2, area1sClosestTo2 )
+    local area1sDeepZDist = math.abs( deepPos1.z - area1sClosestTo2.z )
+    if area1sDeepZDist > 5 then
+        --debugoverlay.Line( center1, center2 , 5, Color( 255, 0, 0 ), true )
+        --debugoverlay.Line( deepPos1, area1sClosestTo2, 5, Color( 255, 0, 0 ), true )
+        return false -- this area is too deep into the other area
+
+    end
+    local _, deepPos2 = util.DistanceToLine( center1, center2, area2sClosestTo1 )
+    local area2sDeepZDist = math.abs( deepPos2.z - area2sClosestTo1.z )
+    if area2sDeepZDist > 5 then
+        --debugoverlay.Line( center1, center2 , 5, Color( 255, 0, 0 ), true )
+        --debugoverlay.Line( deepPos2, area2sClosestTo1, 5, Color( 255, 0, 0 ), true )
+        return false -- this area is too deep into the other area
+
+    end
+
+    for cornerI = 0, 3 do
+
+        local corner1 = area1:GetCorner( cornerI )
+        local corner2 = area2:GetCorner( cornersBuds[cornerI] )
+        corner1 = offsetForThisArea( area1, corner1 )
+        corner2 = offsetForThisArea( area2, corner2 )
+
+        trStruc.start = corner1
+        trStruc.endpos = corner2
+
+        util.TraceLine( trStruc )
+        if trResult.StartSolid then
+            --debugoverlay.Line( trStruc.start, trStruc.endpos, 5, Color( 255, 0, 0 ), true )
+            -- if we start solid, then these two corners are not coplanar
+            return false
+
+        elseif trResult.Hit then
+            --debugoverlay.Line( trStruc.start, trResult.HitPos, 5, Color( 255, 0, 0 ), true )
+            -- if we hit something, then these two corners are not coplanar
+            return false
+
+        else
+            debugoverlay.Line( trStruc.start, trStruc.endpos, 5, Color( 0, 255, 0 ), true )
+            -- these two corners are coplanar
+
+        end
+    end
+    return true
+
+end
 
 function navAreasCanMerge( start, next )
 
@@ -533,7 +629,7 @@ function navAreasCanMerge( start, next )
         -- DONT MESS WITH STAIRS!
         probablyBreakingStairs = true
         -- ok these are coplanar, and they're both stairs... i'll let this slide....
-        if start:IsCoplanar( next ) and start:HasAttributes( NAV_MESH_STAIRS ) and next:HasAttributes( NAV_MESH_STAIRS ) then
+        if AreRoughlyCoplanar( start, next ) then
             probablyBreakingStairs = nil
 
         end
@@ -609,19 +705,7 @@ function navAreasCanMerge( start, next )
     local coplanar = start:IsCoplanar( next )
 
     -- ok this merge is gonna cause artifacts!
-    if not coplanar then
-        local zDifference = math.abs( center1.z - center2.z )
-        -- areas are far apart in height, the artifact will be big
-        if zDifference > 10 then
-            -- if they're both on displacements then we can let it slide
-            local startIsOnDisplacement = NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( start )
-            if not startIsOnDisplacement then return false, 0, NULL end
-
-            local nextIsOnDisplacement = NAVOPTIMIZER_tbl.areaIsEntirelyOverDisplacements( next )
-            if not nextIsOnDisplacement then return false, 0, NULL end
-
-        end
-    end
+    if not coplanar and not AreRoughlyCoplanar( start, next ) then return false, 0, NULL end
 
     return true, newSurfaceArea
 
@@ -866,7 +950,6 @@ function navmeshAutoAttemptMerge( navArea )
 
 end
 
-
 local forceExpensiveMerge = false
 local generateCheapNavmesh = false
 
@@ -1099,7 +1182,7 @@ local function navAddEasyNavmeshSeeds()
 
 end
 
-local cachedPos = Vector( 0,0,0 )
+local cachedPos = Vector( 0, 0, 0 )
 local cachedContents = nil
 
 local function posHasContent( pos, toCheck )
@@ -1238,11 +1321,13 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
             caller:ConCommand( "nav_quicksave 2" )
             -- this makes stairs generate better!
             caller:ConCommand( "nav_slope_limit " .. tostring( slopeLimit ) )
+            caller:ConCommand( "nav_compress_id" )
 
         else
             RunConsoleCommand( "nav_draw_limit", "1" )
             RunConsoleCommand( "nav_quicksave", "2" )
             RunConsoleCommand( "nav_slope_limit", tostring( slopeLimit ) )
+            RunConsoleCommand( "nav_compress_id" )
 
         end
 
@@ -1259,7 +1344,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
     realSeeds = table.Add( realSeeds, potentialRealSeeds )
     realSeedsCount = #realSeeds
 
-    local startingNavareaCount = #navmesh.GetAllNavAreas()
+    local startingNavareaCount = navmesh.GetNavAreaCount()
     local generationCount = 0
     local batchSeedsPlaced = 0
     local seedProgress = 0
@@ -1301,7 +1386,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
             -- the good one
             elseif generationCount > 0 then
-                local newNavAreas = math.abs( startingNavareaCount - #navmesh.GetAllNavAreas() )
+                local newNavAreas = math.abs( startingNavareaCount - navmesh.GetNavAreaCount() )
                 msgDone = "DONE:\nLooped over " .. seedProgress .. " seed positions.\nIncrementally generated " .. generationCount .. " of the seeds that ended up ahead of the navareas.\nWhich created " .. newNavAreas .. " new navareas!!"
                 doneType = 3
 
@@ -1435,7 +1520,7 @@ function superIncrementalGeneration( caller, doWorldSeeds, doPlySeeds )
 
         local impatienceOfGenerator = seedProgress
 
-        local areaCount = #navmesh.GetAllNavAreas()
+        local areaCount = navmesh.GetNavAreaCount()
 
         local batchMax = 10
         if impatienceOfGenerator < threshSlow and areaCount < 5000 then
@@ -1514,6 +1599,56 @@ local function navGenerateCheapPlyseeds( caller )
 end
 
 
+local function navGenerateCheapHere( caller, _cmd, args )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if not IsValid( caller ) then print( "Cannot generate 'here' from console" ) return end
+
+    local radius = 3000
+
+    local arg1 = args[1]
+    if arg1 then
+        local potentialRadius = tonumber( arg1 )
+        if potentialRadius then
+            radius = potentialRadius
+
+        end
+    end
+
+    if NAVOPTIMIZER_tbl.isBusy then return end --don't interrupt!
+    NAVOPTIMIZER_tbl.isBusy = true
+    callerPersist = caller
+    NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
+
+    local seedPos = caller:GetPos()
+
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Incrementally generating \"here\" at position: " .. tostring( seedPos ) .. " \nWith radius: " .. radius )
+
+    navmesh.AddWalkableSeed( seedPos, vec_up )
+
+    makeGenerationCheap()
+
+    callerPersist:ConCommand( "nav_generate_incremental_range " .. radius )
+    callerPersist:ConCommand( "nav_generate_incremental" )
+
+    if IsValid( callerPersist ) and not game.SinglePlayer() then
+        callerPersist:ConCommand( "nav_draw_limit 1" ) -- dont crash PLS
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "nav_draw_limit set to 1, to prevent crashes!" )
+
+    end
+
+    timer.Create( "navoptimizer_generatecheaphere_finish", 0.25, 0, function()
+        if navmesh.IsGenerating() then return end
+
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Finished generating incrementally around here!" )
+        timer.Remove( "navoptimizer_generatecheaphere_finish" )
+        NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+        NAVOPTIMIZER_tbl.isBusy = false
+        hook.Run( "navoptimizer_done_gencheaphere" )
+
+    end )
+end
+
+
 local function navMeshGlobalMerge( caller )
     if NAVOPTIMIZER_tbl.isBusy then return end
     callerPersist = caller
@@ -1529,9 +1664,11 @@ local function navMeshGlobalMerge( caller )
 
     if IsValid( callerPersist ) then
         callerPersist:ConCommand( "nav_clear_selected_set" )
+        callerPersist:ConCommand( "nav_compress_id" )
 
     else
         RunConsoleCommand( "nav_clear_selected_set" )
+        RunConsoleCommand( "nav_compress_id" )
 
     end
 
@@ -1578,7 +1715,7 @@ local function navMeshGlobalMergeAuto( caller )
     initialRepeatCount = 0
     repeatMergedCount = 0
     globalMergeRepeat = true
-    initialRepeatCount = #navmesh.GetAllNavAreas()
+    initialRepeatCount = navmesh.GetNavAreaCount()
 
 end
 
@@ -1620,9 +1757,8 @@ end
 -- fixes some extreme lag?
 local nextPrint = 0
 
+-- printcenter the results
 local function navMeshGlobalMergePrintResults()
-    -- spaghetti
-
     if not doMessageThink then hook.Remove( "Tick", "navmeshGlobalMergePrintResults" ) return end
 
     if nextPrint > CurTime() then return end
@@ -1653,7 +1789,7 @@ local function navMeshGlobalMergePrintResults()
         return
     end
 
-    if not NAVOPTIMIZER_tbl.doingGlobalMerge and globalMergeResultTime > CurTime() then -- mt everest
+    if not NAVOPTIMIZER_tbl.doingGlobalMerge and globalMergeResultTime > CurTime() then
         local CONGRATS = ""
         if doneMergedCount == 0 then
             CONGRATS = "Your navmesh is optimized, Gratz!"
@@ -1679,11 +1815,109 @@ local function finishGlobalMerge( type )
 
 end
 
--- this function is so spaghetti that an italian would think it is above spaghetti, beyond spaghetti, something, something else....
+local function pluralize( count )
+    return count == 1 and "" or "s"
+end
+
+local function runNavCommand( cmd, arg )
+    if IsValid( callerPersist ) then
+        callerPersist:ConCommand( arg and ( cmd .. " " .. arg ) or cmd )
+    else
+        RunConsoleCommand( cmd, arg )
+    end
+end
+
+local function scheduleNavAnalyze()
+    analyzing = true
+
+    timer.Simple( 0, function()
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Analyzing navmesh in 15s..." )
+    end )
+
+    timer.Simple( 15, function()
+        local isCheap = generateCheapNavmesh and not forceExpensiveMerge
+        if isCheap then
+            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Analyzing cheap!" )
+        end
+
+        if IsValid( callerPersist ) then
+            runNavCommand( "nav_max_view_distance", isCheap and "1" or tostring( expensiveVisDist ) )
+            runNavCommand( "nav_analyze" )
+            timer.Simple( 0, function()
+                NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+            end )
+        elseif game.IsDedicated() then
+            RunConsoleCommand( "nav_max_view_distance", isCheap and "1" or tostring( expensiveVisDist ) )
+            RunConsoleCommand( "nav_edit", "1" )
+            RunConsoleCommand( "nav_analyze" )
+            timer.Simple( 1, function()
+                NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+            end )
+        end
+
+        doingRepeatMergedMessage = 0
+    end )
+end
+
+local function handleMergePassComplete()
+    NAVOPTIMIZER_tbl.isBusy = false
+    NAVOPTIMIZER_tbl.doingGlobalMerge = false
+
+    runNavCommand( "nav_compress_id" )
+    runNavCommand( "nav_check_stairs" )
+
+    -- Not doing repeat mode? Just show result and finish.
+    if not globalMergeRepeat then
+        doMessageThink = true
+        congragulated = nil
+        globalMergeResultTime = CurTime() + 15
+        NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Globalmerge finished. Did " .. repeatMergedCount .. " merges." )
+        finishGlobalMerge( 3 )
+        return
+    end
+
+    -- Did merges this pass? Accumulate stats and keep going.
+    if doneMergedCount > 0 then
+        repeatMergedCount = repeatMergedCount + doneMergedCount
+        repeatMergedArea = repeatMergedArea + doneMergedArea
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Done " .. doneMergedCount .. " merge" .. pluralize( doneMergedCount ) .. "." )
+        navMeshGlobalMerge( callerPersist )
+        return
+    end
+
+    -- No merges this pass, but had some previously? Success - schedule analyze.
+    if repeatMergedCount > 0 then
+        if IsValid( callerPersist ) then
+            callerPersist:EmitSound( "garrysmod/save_load4.wav" )
+        end
+
+        doingRepeatMergedMessage = CurTime() + 15
+        doMessageThink = true
+
+        if blockFinalAnalyze then
+            NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+        else
+            scheduleNavAnalyze()
+        end
+
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "SUCCESS!\nGlobalmerge finished. Did " .. repeatMergedCount .. " merge" .. pluralize( repeatMergedCount ) .. " total." )
+        finishGlobalMerge( 1 )
+        return
+    end
+
+    -- Zero merges total - already optimized.
+    doMessageThink = true
+    congragulated = true
+    globalMergeResultTime = CurTime() + 15
+    NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Globalmerge finished, areas were as merged as possible." )
+    finishGlobalMerge( 2 )
+end
+
 function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
     if not SERVER then return end
     if NAVOPTIMIZER_tbl.doingGlobalMerge ~= true then return end
-    local done = nil
 
     -- go through the list faster when we're not merging anything
     local operationsCount = 6
@@ -1699,129 +1933,30 @@ function NAVOPTIMIZER_tbl.navMeshGlobalMergeThink()
     end
     operationsWithoutMerges = operationsWithoutMerges + 1
 
-    -- no coroutine????
+    -- process batch of areas
+    local done = false
     for areaIndex = mergeIndex, mergeIndex + operationsCount do
-        local curr = areasToMerge[areaIndex]
         if areaIndex > #areasToMerge then
             done = true
             break
-        elseif curr and curr:IsValid() then
+        end
+
+        local curr = areasToMerge[areaIndex]
+        if curr and curr:IsValid() then
             local validMerge, newSurfaceArea, _ = navmeshAutoAttemptMerge( curr )
-            if validMerge == true then
+            if validMerge then
                 doneMergedCount = doneMergedCount + 1
                 doneMergedArea = doneMergedArea + newSurfaceArea
                 operationsWithoutMerges = 0
             end
         end
     end
-    if not done then
+
+    if done then
+        handleMergePassComplete()
+    else
         NAVOPTIMIZER_tbl.printCenterAlias( mergeIndex .. " / " .. areasToMergeCount )
         mergeIndex = mergeIndex + operationsCount
-
-    elseif done then
-        NAVOPTIMIZER_tbl.isBusy = false
-        NAVOPTIMIZER_tbl.doingGlobalMerge = false
-        if IsValid( callerPersist ) then
-            callerPersist:ConCommand( "nav_compress_id" )
-            callerPersist:ConCommand( "nav_check_stairs" )
-
-        else
-            RunConsoleCommand( "nav_compress_id" )
-            RunConsoleCommand( "nav_check_stairs" )
-
-        end
-
-        -- doing a repeating one
-        if globalMergeRepeat == true then
-            -- a merge was done this loop, keep merging
-            if doneMergedCount > 0 then
-                repeatMergedCount = repeatMergedCount + doneMergedCount
-                repeatMergedArea = repeatMergedArea + doneMergedArea
-
-                local sOrNoS = "s"
-                if doneMergedCount == 1 then
-                    sOrNoS = ""
-
-                end
-                local msg = "Done " .. doneMergedCount .. " merge" .. sOrNoS .. "."
-                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-
-                navMeshGlobalMerge( callerPersist )
-            -- no merges were done this loop, and we're not on the first loop, call it validated as done!
-            elseif repeatMergedCount > 0 then
-                if IsValid( callerPersist ) then
-                    callerPersist:EmitSound( "garrysmod/save_load4.wav" )
-
-                end
-                doingRepeatMergedMessage = CurTime() + 15
-                doMessageThink = true
-                if not blockFinalAnalyze then
-                    analyzing = true
-                    timer.Simple( 0, function()
-                        local msg = "Analyzing navmesh in 15s..."
-                        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-
-                    end )
-                    timer.Simple( 15, function()
-                        if IsValid( callerPersist ) then
-                            --don't ask people to do vis calculations on maps that didn't have them in the first place!
-                            if generateCheapNavmesh == true and forceExpensiveMerge == false then
-                                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Analyzing cheap!" )
-                                callerPersist:ConCommand( "nav_max_view_distance 1" )
-                            else
-                                callerPersist:ConCommand( "nav_max_view_distance " .. tostring( expensiveVisDist ) ) --cheat a bit to make this faster
-                            end
-                            callerPersist:ConCommand( "nav_analyze" )
-                            timer.Simple( 0, function()
-                                NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
-                            end )
-                        elseif game.IsDedicated() then
-                            if generateCheapNavmesh == true and forceExpensiveMerge == false then
-                                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Analyzing cheap!" )
-                                RunConsoleCommand( "nav_max_view_distance", "1" )
-                            else
-                                RunConsoleCommand( "nav_max_view_distance", tostring( expensiveVisDist ) )
-                            end
-                            RunConsoleCommand( "nav_edit", "1" )
-                            RunConsoleCommand( "nav_analyze" )
-                            timer.Simple( 1, function()
-                                NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
-                            end )
-                        end
-                        doingRepeatMergedMessage = 0
-                    end )
-                else
-                    NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
-                end
-                local sOrNoS = "s"
-                if repeatMergedCount == 1 then
-                    sOrNoS = ""
-
-                end
-                local msg = "SUCCESS!\nGlobalmerge finished. Did " .. repeatMergedCount .. " merge" .. sOrNoS .. " total."
-                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-                finishGlobalMerge( 1 )
-            -- 0 total merged areas, command did nothing.
-            elseif repeatMergedCount == 0 then
-                doMessageThink = true
-                congragulated = true
-                globalMergeResultTime = CurTime() + 15
-                NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
-                local msg = "Globalmerge finished, areas were as merged as possible."
-                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-                finishGlobalMerge( 2 )
-            end
-        -- one-loop merge, will probably deprecate this
-        else
-            doMessageThink = true
-            congragulated = nil
-            globalMergeResultTime = CurTime() + 15
-            NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
-            local msg = "Globalmerge finished. Did " .. repeatMergedCount .. " merges."
-            NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-            finishGlobalMerge( 3 )
-
-        end
     end
 end
 
@@ -1843,6 +1978,10 @@ concommand.Add( "navmesh_generate_cheap_expanded", navGenerateCheapExpanded, nil
 
 concommand.Add( "nav_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_expanded. Inital seeds are only placed under players.", FCVAR_NONE )
 concommand.Add( "navmesh_generate_cheap_plyseeds", navGenerateCheapPlyseeds, nil, "Clone of nav_generate_cheap_plyseeds.", FCVAR_NONE )
+
+-- alias for an incremental generation under player's feet
+concommand.Add( "nav_generate_cheap_here", navGenerateCheapHere, function() return 3000 end, "Cheap generation under your cursor, doesn't generate the entire map. accepts radius arg", FCVAR_NONE )
+concommand.Add( "navmesh_generate_cheap_here", navGenerateCheapHere, function() return 3000 end, "Clone of nav_generate_cheap_here.", FCVAR_NONE )
 
 
 concommand.Add( "navmesh_ischeap", navmeshIsCheapCommand, nil, "Was this navmesh generated without visibility data?", FCVAR_NONE )

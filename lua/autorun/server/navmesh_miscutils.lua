@@ -4,6 +4,8 @@ local IsValid = IsValid
 local math_min = math.min
 local math_max = math.max
 
+local teleportUpOffset = Vector( 0, 0, 15 )
+
 NAVOPTIMIZER_tbl = NAVOPTIMIZER_tbl or {}
 
 function NAVOPTIMIZER_tbl.AreasHaveAnyOverlap( area1, area2 ) -- i love chatgpt functions
@@ -296,6 +298,7 @@ function getCorruptAreas( areas )
         if isCorruptCache then
             local cached = isCorruptCache[area]
             if cached == true then
+                brokenCount = brokenCount + 1
                 table.insert( corruptedAreas, area )
                 continue
 
@@ -392,8 +395,8 @@ function navmeshDeleteAreas( areasOverride, dontRemoveLadders, caller, hookOnDon
     local areas = areasOverride or navmesh.GetAllNavAreas()
     local areaCount = #areas
 
-    -- if less than 10k areas
-    if areaCount < blockSize * 20 then
+    -- if less than 5k areas
+    if areaCount < blockSize * 10 then
         for _, area in ipairs( areas ) do
             if not IsValid( area ) then continue end
             area:Remove()
@@ -475,10 +478,12 @@ end
 
 local warned
 
+-- TODO: make this use navmesh.Reset instead of manually deleting areas?
+
 local function navmeshDeleteAllAreasCmd( caller )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.isBusy then return end
-    if not warned then -- start removing corrupt areas NOW!
+    if not warned then -- dont just delete everything first func call
         warned = true
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Are you sure you want to remove ALL navareas?\nRun this command again now to proceed." )
         timer.Simple( 10, function()
@@ -746,7 +751,146 @@ local function navmeshTpToCorruptArea( caller )
     local index = math.random( 1, #corruptAreas )
 
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleported " .. caller:GetName() .. " to corrupt area #" .. index .. " / " .. corruptCount )
-    caller:SetPos( corruptAreas[index]:GetCenter() )
+    caller:SetPos( corruptAreas[index]:GetCenter() + teleportUpOffset )
+
+end
+
+-- Deletes navareas smaller than NxN that have zero outgoing and zero incoming adjacencies
+local delIsolatedActive
+local delIsolatedCor
+
+local function startDeleteIsolatedSmallAreas( caller, sizeThreshold )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+
+    local threshold = tonumber( sizeThreshold ) or 50
+    if threshold < 1 then threshold = 1 end
+
+    NAVOPTIMIZER_tbl.isBusy = true
+    callerPersist = caller
+    NAVOPTIMIZER_tbl.enableNavEdit( callerPersist )
+
+    local allAreas = navmesh.GetAllNavAreas()
+    local total = #allAreas
+    local candidates = {}
+
+    local phase = 1 -- 1=build incoming map, 2=collect candidates
+    local idx = 0
+    local nextLog = SysTime() + 5
+
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Scanning for isolated small areas (< " .. threshold .. "x" .. threshold .. ")..." )
+
+    local function runner()
+        -- Phase 1: Build map of incoming connections
+        while phase == 1 do
+            idx = idx + 1
+            local area = allAreas[idx]
+            if not area then
+                phase = 2
+                idx = 0
+                break
+            end
+
+            coroutine.yield()
+
+            if SysTime() > nextLog then
+                nextLog = SysTime() + 5
+                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Processed adjacency for " .. idx .. " / " .. total .. " areas..." )
+            end
+        end
+
+        -- Phase 2: Gather areas with no outgoing and no incoming, and smaller than threshold
+        while phase == 2 do
+            idx = idx + 1
+            local area = allAreas[idx]
+            if not area then
+                NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Found " .. #candidates .. " isolated small areas. Deleting..." )
+                coroutine.yield( "done" )
+            end
+
+            coroutine.yield()
+
+            local sx, sy = area:GetSizeX(), area:GetSizeY()
+            if sx < threshold and sy < threshold then
+                local outAdj = table.Add( area:GetAdjacentAreas(), area:GetIncomingConnections() )
+                if #outAdj == 0 then
+                    candidates[#candidates + 1] = area
+                end
+            end
+
+            NAVOPTIMIZER_tbl.printCenterAlias( "AREA " .. idx .. " / " .. total .. "\nMatches so far: " .. #candidates )
+        end
+    end
+
+    delIsolatedCor = coroutine.create( runner )
+    delIsolatedActive = true
+
+    hook.Add( "Tick", "navoptimizer_DeleteIsolatedSmallAreas", function()
+        if not delIsolatedActive or not delIsolatedCor then
+            hook.Remove( "Tick", "navoptimizer_DeleteIsolatedSmallAreas" )
+            return
+        end
+
+        local start = SysTime()
+        while math.abs( start - SysTime() ) < 0.0008 do
+            local ok, res = coroutine.resume( delIsolatedCor )
+            if not ok then
+                ErrorNoHaltWithStack( res )
+                delIsolatedActive = nil
+                delIsolatedCor = nil
+                NAVOPTIMIZER_tbl.isBusy = false
+                hook.Remove( "Tick", "navoptimizer_DeleteIsolatedSmallAreas" )
+                return
+            end
+
+            if res == "done" then
+                delIsolatedActive = nil
+                delIsolatedCor = nil
+                hook.Remove( "Tick", "navoptimizer_DeleteIsolatedSmallAreas" )
+
+                -- release busy before calling deletion routine (it sets busy)
+                NAVOPTIMIZER_tbl.isBusy = false
+
+                if #candidates <= 0 then
+                    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No isolated small areas to remove." )
+                    hook.Run( "navoptimizer_done_removingisolatedsmallareas" )
+                    return
+                end
+
+                navmeshDeleteAreas( candidates, true, caller, "navoptimizer_done_removingisolatedsmallareas" )
+                return
+            end
+        end
+    end )
+end
+
+local function navmeshDeleteIsolatedSmallAreasCmd( caller, _, args )
+    local threshold = tonumber( args and args[1] ) or 50
+    startDeleteIsolatedSmallAreas( caller, threshold )
+end
+
+local function navmeshTpToBlockedArea( caller )
+    if NAVOPTIMIZER_tbl.isNotCheats() then return end
+    if NAVOPTIMIZER_tbl.isBusy then return end
+    if not IsValid( caller ) then NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Need valid caller, spawn into the game!" ) return end
+
+    local allAreas = navmesh.GetAllNavAreas()
+    local blockedAreas = {}
+    for _, area in ipairs( allAreas ) do
+        if area:IsBlocked() then
+            table.insert( blockedAreas, area )
+        end
+    end
+
+    if #blockedAreas <= 0 then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "No blocked areas." )
+        return
+    end
+
+    local index = math.random( 1, #blockedAreas )
+
+    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Teleported " .. caller:GetName() .. " to blocked area #" .. index .. " / " .. #blockedAreas )
+    caller:SetPos( blockedAreas[index]:GetCenter() + teleportUpOffset )
 
 end
 
@@ -761,3 +905,6 @@ concommand.Add( "navmesh_delete_corruptareas", navmeshDeleteCorruptAreasInRadius
 
 concommand.Add( "navmesh_highlight_corruptareas", navmeshHighlightCorruptAreasCmd, nil, "Places \"developer 1\" crosses on \"corrupt\" navareas. 0 radius for mapwide, default 2000.", FCVAR_NONE )
 concommand.Add( "navmesh_teleportto_corruptarea", navmeshTpToCorruptArea, nil, "Teleports caller to a random corrupt area on the map", FCVAR_NONE )
+concommand.Add( "navmesh_delete_isolated_smallareas", navmeshDeleteIsolatedSmallAreasCmd, nil, "Deletes navareas smaller than NxN (default 50) with zero incoming and outgoing adjacencies.", FCVAR_NONE )
+
+concommand.Add( "navmesh_teleportto_blockedarea", navmeshTpToBlockedArea, nil, "Teleports caller to a random blocked area on the map", FCVAR_NONE )

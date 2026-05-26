@@ -173,6 +173,8 @@ local function handlePotentialDeepUnderwaterArea( area, depth )
 
     if wasDry then return end
 
+    if #area:GetLadders() > 0 then return end -- don't shoot the term areapatcher in the foot
+
     area:Remove()
     removedAreaSlowDown = 10
 

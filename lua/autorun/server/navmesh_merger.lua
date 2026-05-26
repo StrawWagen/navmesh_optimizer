@@ -296,6 +296,7 @@ end
 
 local function getShortestDistanceToNavSqr( checkNav, checkPos )
     return checkPos:DistToSqr( checkNav:GetClosestPointOnArea( checkPos ) )
+
 end
 
 local down = Vector( 0, 0, -1 )

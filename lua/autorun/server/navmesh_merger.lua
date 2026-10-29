@@ -703,7 +703,7 @@ function navAreasCanMerge( start, next )
     local wouldBeTooBig = newSurfaceArea > 300000 or tooLong
     if wouldBeTooBig then return false, 0, NULL end
 
-    local coplanar = start:IsCoplanar( next )
+    local coplanar = start:IsCoplanar( next ) and start:ComputeAdjacentConnectionHeightChange( next ) <= 5
 
     -- ok this merge is gonna cause artifacts!
     if not coplanar and not AreRoughlyCoplanar( start, next ) then return false, 0, NULL end
@@ -972,7 +972,6 @@ local repeatMergedCount = 0
 local repeatMergedArea = 0
 
 local doMessageThink = nil
-local congragulated = nil
 local globalMergeResultTime = 0
 local doingRepeatMergedMessage = 0
 local blockFinalAnalyze = nil
@@ -1679,25 +1678,14 @@ local function navMeshGlobalMerge( caller )
 
 end
 
--- old command
-local function navMeshGlobalMergeSingular( caller )
+local function startGlobalMergeAuto( caller, noAnalyze )
     if NAVOPTIMIZER_tbl.isNotCheats() then return end
     if NAVOPTIMIZER_tbl.isBusy then return end
-    navMeshGlobalMerge( caller )
+    blockFinalAnalyze = noAnalyze
+    if noAnalyze then
+        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Globalmerging... Not analyzing at the end." )
 
-    local msg = "Singular globalmerging..."
-    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
-    globalMergeRepeat = false
-    initialRepeatCount = 0
-    repeatMergedCount = 0
-
-end
-
--- main command
-local function navMeshGlobalMergeAuto( caller )
-    if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.isBusy then return end
-    if blockFinalAnalyze ~= true then
+    else
         local msg = "Globalmerging... & finishing with a nav_analyze"
         NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
 
@@ -1713,20 +1701,19 @@ local function navMeshGlobalMergeAuto( caller )
     end
     navMeshGlobalMerge( caller )
 
-    initialRepeatCount = 0
     repeatMergedCount = 0
-    globalMergeRepeat = true
     initialRepeatCount = navmesh.GetNavAreaCount()
 
 end
 
+-- concommands pass the command name second, so these can't share startGlobalMergeAuto's signature
+local function navMeshGlobalMergeAuto( caller )
+    startGlobalMergeAuto( caller, false )
+
+end
+
 local function navMeshGlobalMergeAutoNoAnalyze( caller )
-    if NAVOPTIMIZER_tbl.isNotCheats() then return end
-    if NAVOPTIMIZER_tbl.isBusy then return end
-    blockFinalAnalyze = true
-    navMeshGlobalMergeAuto( caller )
-    local msg = "Globalmerging... Not analyzing at the end."
-    NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( msg )
+    startGlobalMergeAuto( caller, true )
 
 end
 
@@ -1791,19 +1778,7 @@ local function navMeshGlobalMergePrintResults()
     end
 
     if not NAVOPTIMIZER_tbl.doingGlobalMerge and globalMergeResultTime > CurTime() then
-        local CONGRATS = ""
-        if doneMergedCount == 0 then
-            CONGRATS = "Your navmesh is optimized, Gratz!"
-            if not congragulated then
-                for _, ply in ipairs( player.GetAll() ) do
-                    ply:EmitSound( "garrysmod/save_load4.wav" )
-                    congragulated = true
-
-                end
-            end
-        end
-        local message = "Merged " .. doneMergedCount .. " areas.\nTotal merged surface area: " .. math.Round( doneMergedArea ) .. " square hu\n" .. CONGRATS
-        NAVOPTIMIZER_tbl.printCenterAlias( message )
+        NAVOPTIMIZER_tbl.printCenterAlias( "Your navmesh is optimized, Gratz!" )
 
     end
 end
@@ -1867,17 +1842,6 @@ local function handleMergePassComplete()
     runNavCommand( "nav_compress_id" )
     runNavCommand( "nav_check_stairs" )
 
-    -- Not doing repeat mode? Just show result and finish.
-    if not globalMergeRepeat then
-        doMessageThink = true
-        congragulated = nil
-        globalMergeResultTime = CurTime() + 15
-        NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
-        NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Globalmerge finished. Did " .. repeatMergedCount .. " merges." )
-        finishGlobalMerge( 3 )
-        return
-    end
-
     -- Did merges this pass? Accumulate stats and keep going.
     if doneMergedCount > 0 then
         repeatMergedCount = repeatMergedCount + doneMergedCount
@@ -1909,7 +1873,6 @@ local function handleMergePassComplete()
 
     -- Zero merges total - already optimized.
     doMessageThink = true
-    congragulated = true
     globalMergeResultTime = CurTime() + 15
     NAVOPTIMIZER_tbl.disableNavEdit( callerPersist )
     NAVOPTIMIZER_tbl.sendAsNavmeshOptimizer( "Globalmerge finished, areas were as merged as possible." )
@@ -1990,5 +1953,3 @@ concommand.Add( "navmesh_ischeap", navmeshIsCheapCommand, nil, "Was this navmesh
 concommand.Add( "navmesh_globalmerge_auto", navMeshGlobalMergeAuto, nil, "Automatically merges every possible area, then rebuilds the visibility/hiding spot stuff.", FCVAR_NONE )
 concommand.Add( "navmesh_globalmerge_auto_noanalyze", navMeshGlobalMergeAutoNoAnalyze, nil, "Doesn't nav_analyze at the end.", FCVAR_NONE )
 concommand.Add( "navmesh_override_expensive", navmeshExpensiveToggle, nil, "Toggle forced expensive nav_analyze", FCVAR_NONE )
-
-concommand.Add( "navmesh_globalmerge_singular", navMeshGlobalMergeSingular, nil, "Performs a singular merging pass.", FCVAR_NONE )
